@@ -17,13 +17,12 @@ def generate_graphs_layout(phase_range):
             dbc.Row([
                 dbc.Col(html.H2('Social hierarchy'), className="text-left my-4")
             ]),
-            dbc.Row([
                 
             dbc.Row([
                 dbc.Col(dcc.RadioItems(
                     id='ranking-switch',
                     options=[
-                        {'label': 'In time', 'value': 'intime'}
+                        {'label': 'In time', 'value': 'intime'},
                         {'label': 'Day stability', 'value': 'stability'}
                     ],
                     value='intime',
