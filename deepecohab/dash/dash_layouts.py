@@ -24,6 +24,7 @@ def generate_graphs_layout(phase_range):
                     id='ranking-switch',
                     options=[
                         {'label': 'In time', 'value': 'intime'}
+                        {'label': 'Day stability', 'value': 'stability'}
                     ],
                     value='intime',
                     labelStyle={'display': 'inline-block'}
