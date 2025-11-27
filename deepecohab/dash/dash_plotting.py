@@ -124,7 +124,8 @@ def ranking_distribution(
 
 def ranking_over_time(
     store: pd.HDFStore,
-    animals, colors
+    animals, colors,
+    ranking_switch: Literal['intime', 'stability'],
 ) -> tuple[go.Figure, pd.DataFrame]:
     """Generates a line plot of the ranking distribution over time.
 
@@ -139,7 +140,7 @@ def ranking_over_time(
     ranking_in_time = store['ranking_in_time']
     main_df = store['main_df']
 
-    return plot_factory.plot_ranking_line(ranking_in_time, main_df, colors, animals)
+    return plot_factory.plot_ranking_line(ranking_in_time, main_df, colors, animals, ranking_switch)
 
 def pairwise_sociability(
     store: pd.HDFStore,
@@ -316,7 +317,7 @@ def get_single_plot(store, mode, plot_type, data_slice, phase_range, agg_switch,
         case 'ranking_distribution':
             return ranking_distribution(store, data_slice, animals, colors)
         case 'ranking_line':
-            return ranking_over_time(store, animals, colors)
+            return ranking_over_time(store, animals, colors, ranking_switch)
         case 'time_per_cage':
             return time_per_cage(store, phase_range, animals, colors)
         case _:
