@@ -19,7 +19,15 @@ def generate_graphs_layout(phase_range):
             ]),
             dbc.Row([
                 
-                
+            dbc.Row([
+                dbc.Col(dcc.RadioItems(
+                    id='ranking-switch',
+                    options=[
+                        {'label': 'In time', 'value': 'intime'}
+                    ],
+                    value='intime',
+                    labelStyle={'display': 'inline-block'}
+                ), width=1),
             ]),
             dbc.Row([
                 dbc.Col([
