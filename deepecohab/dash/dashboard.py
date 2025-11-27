@@ -135,9 +135,11 @@ if __name__ == '__main__':
             Input('aggregate-stats-switch', 'value'),
             Input('position-switch', 'value'),
             Input('pairwise-switch', 'value'),
+            Input('ranking-switch', 'value'),
+
         ]  
     )
-    def update_plots(phase_range, mode, aggregate_stats_switch, position_switch, pairwise_switch):
+    def update_plots(phase_range, mode, aggregate_stats_switch, position_switch, pairwise_switch, ranking_switch):
         data_slice = auxfun_dashboard.get_data_slice(mode, phase_range)
             
         animals = store['main_df'].animal_id.cat.categories
@@ -150,7 +152,7 @@ if __name__ == '__main__':
         incohort_soc_plot, incohort_soc_data = dash_plotting.within_cohort_sociability(store, data_slice)
         network_plot, network_plot_data = dash_plotting.network_graph(store, mode, phase_range, animals, colors)
         chasing_line_plot, chasing_line_data = dash_plotting.chasings_line(store, phase_range, aggregate_stats_switch, animals, colors)
-        ranking_line, ranking_data = dash_plotting.ranking_over_time(store, animals, colors)
+        ranking_line, ranking_data = dash_plotting.ranking_over_time(store, animals, colors, ranking_switch)
         ranking_distribution, ranking_distribution_data = dash_plotting.ranking_distribution(store, data_slice, animals, colors)
         time_per_cage, time_per_cage_data = dash_plotting.time_per_cage(store, phase_range, aggregate_stats_switch, animals, colors)
         metrics_fig, metrics_data = dash_plotting.metrics(store, data_slice, animals, colors)
