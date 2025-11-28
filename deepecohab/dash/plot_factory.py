@@ -178,28 +178,34 @@ def plot_ranking_distribution(
     df: pd.DataFrame,
     animals: list[str],
     colors: list[tuple[int, int, int, float]],
+    ranking_switch: Literal['intime', 'stability'],
 ) -> tuple[go.Figure, pd.DataFrame]:
     """Plots line graph of ranking distribution with shaded area."""
+
+    # Switch title depending on mode
+    match ranking_switch:
+        case 'intime':
+            title = '<b>Ranking probability distribution (PL ordinal)</b>'
+            y_label = 'Probability density'
+
+        case 'stability':
+            title = '<b>Rank-order stability distribution</b>'
+            y_label = 'Proportion'
+    
     distribution_df = auxfun_plots.prep_ranking_distribution(df)
     
     fig = px.line(
         distribution_df,
         color_discrete_map={animal: color for animal, color in zip(animals, colors)},
     )
+    
     fig.update_traces(fill='tozeroy')
 
     fig.update_layout(
-        title='<b>Ranking probability distribution</b>',
-        xaxis=dict(
-            title='Ranking',
-        ),
-        yaxis=dict(
-            title='Probability density',
-        ),
-        legend=dict(
-            title='animal_id',
-            tracegroupgap=0,
-            )
+        title=title,
+        xaxis=dict(title='Ranking'),
+        yaxis=dict(title=y_label),
+        legend=dict(title='animal_id', tracegroupgap=0),
     )
 
     return fig, distribution_df
@@ -209,10 +215,27 @@ def plot_ranking_line(
     main_df: pd.DataFrame,
     colors, 
     animals,
+    ranking_switch: Literal['intime', 'stability'],
 ) -> tuple[go.Figure, pd.DataFrame]:
-    """Plots line graph of ranking over time."""   
-    plot_df = auxfun_plots.prep_ranking_in_time_df(main_df, ranking_in_time, per_hour=True)
+    """Plots line graph of ranking over time.
+    'intime': plot PL ordinal ranking
+    'stability' plot rank order"""
 
+    match ranking_switch:
+        case 'intime':
+            title = '<b>Social dominance ranking in time</b>'
+            ytitle = 'Ranking'
+            autorange = True
+
+        case 'stability':
+            title = '<b> Social dominance rank order</b>'
+            ytitle = 'Rank (1 = most dominant)'
+            autorange = 'reversed'
+            
+    plot_df = auxfun_plots.prep_ranking_in_time_df(main_df, ranking_df, per_hour=True)
+
+    
+    
     fig = go.Figure()
     for i, animal in enumerate(animals):
         fig.add_trace(
@@ -225,19 +248,10 @@ def plot_ranking_line(
         )
 
     fig.update_layout(
-        title='<b>Social dominance ranking in time</b>',
-        legend=dict(
-            title='animal_id',
-            tracegroupgap=0,
-            ),
-        xaxis=dict(
-            # Breakes download from the dash - maybe a bug in dash? works outside. TODO: report it?
-            # rangeslider=dict(visible=True, thickness=0.1), 
-            title='Timeline'
-        ),
-        yaxis=dict(
-            title='Ranking',
-        ),
+        title=title,
+        legend=dict(title="animal_id", tracegroupgap=0),
+        xaxis=dict(title="Timeline"),
+        yaxis=dict(title=ytitle, autorange=autorange),
     )
 
     return fig, plot_df
