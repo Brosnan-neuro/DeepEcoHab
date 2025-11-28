@@ -109,7 +109,8 @@ def ranking_distribution(
 ) -> tuple[go.Figure, pd.DataFrame]:
     """Generates a line plot of the ranking distribution.
 
-    This function generates a line plot showing the distribution of rankings based on the specified data slice (phase type and range).
+    This function generates a line plot showing the distribution of rankings based on the specified data slice (phase type and range),
+    and the same data converted to rank order with Kendall's W indicating if the hierachy is stable or not.
 
     Args:
         store: The HDFStore object containing the data.
@@ -135,12 +136,19 @@ def ranking_over_time(
         store: The HDFStore object containing the data.
 
     Returns:
-        A Plotly Figure object representing the line plot.
+        A Plotly Figure object representing the line plot, and converts PL ordinal scores to rank order (1=most dominant)
     """
-    ranking_in_time = store['ranking_in_time']
+if ranking_switch == 'intime':
+    df = store['ranking_in_time']
+
+elif ranking_switch == 'stability':
+    df = store['ranking_ordinal']
+
+ranking_df = df.rank(axis=1, method='dense', ascending=False)
+            
     main_df = store['main_df']
 
-    return plot_factory.plot_ranking_line(ranking_in_time, main_df, colors, animals, ranking_switch)
+    return plot_factory.plot_ranking_line(ranking_df, main_df, colors, animals, ranking_switch)
 
 def pairwise_sociability(
     store: pd.HDFStore,
