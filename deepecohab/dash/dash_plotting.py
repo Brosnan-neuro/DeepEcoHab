@@ -144,7 +144,7 @@ if ranking_switch == 'intime':
 elif ranking_switch == 'stability':
     df = store['ranking_ordinal']
 
-ranking_df = df.rank(axis=1, method='dense', ascending=False)
+ranking_df = ranking_df.rank(axis=1, method='dense', ascending=False)
             
     main_df = store['main_df']
 
