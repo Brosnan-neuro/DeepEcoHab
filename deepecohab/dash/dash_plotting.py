@@ -18,15 +18,12 @@ def ranking_over_time(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	match cfg.ranking_switch:
 		case "intime":
 			df = auxfun_plots.prep_ranking_over_time(cfg.store)
-			return  plot_factory.plot_ranking_line(
-				df, cfg.animals, cfg.animal_colors
-			)
+			return plot_factory.plot_ranking_line(df, cfg.animals, cfg.animal_colors)
 
 		case "stability":
 			df = auxfun_plots.prep_ranking_day_stability(cfg.store)
-			return plot_factory.plot_ranking_stability(
-				df, cfg.animals, cfg.animal_colors
-			)
+			return plot_factory.plot_ranking_stability(df, cfg.animals, cfg.animal_colors)
+
 
 @plot_registry.register(
 	"metrics-polar-line",
@@ -246,11 +243,12 @@ def pairwise_sociability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 		cfg.cages,
 	)
 
-	return plot_factory.plot_sociability_heatmap(img, cfg.pairwise_switch, cfg.animals, cfg.cages)
+	return plot_factory.plot_sociability_heatmap(img, cfg.pairwise_switch, cfg.animals)
 
 
 @plot_registry.register(
-	"cohort-heatmap", dependencies=["store", "animals", "phase_type", "days_range", "sociability_switch"]
+	"cohort-heatmap",
+	dependencies=["store", "animals", "phase_type", "days_range", "sociability_switch"],
 )
 def within_cohort_sociability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	"""Generates a normalized heatmap of sociability within the entire cohort.
@@ -310,3 +308,23 @@ def network_sociability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	return plot_factory.plot_network_graph(
 		connections, None, cfg.animals, cfg.animal_colors, "sociability"
 	)
+
+
+@plot_registry.register(
+	"social-stability",
+	dependencies=["store", "animals", "animal_colors", "phase_type", "days_range"],
+)
+def social_stability(cfg: PlotConfig) -> tuple(go.Figure, pl.DataFrame):
+	"""Generates a social stability scatter plot.
+
+	Visualizes stability of a relationship of every pair across chosen days 
+ 	based on proportional time spent together and coefficient of variation like metric
+	calculated through median absolute deviation.
+
+	Returns:
+	    A tuple containing the Plotly Figure and the processed Polars DataFrame.
+	"""
+ 
+	df = auxfun_plots.prep_social_stability(cfg.store, cfg.phase_type, cfg.days_range)
+ 
+	return plot_factory.plot_social_stability(df, cfg.animals, cfg.animal_colors)

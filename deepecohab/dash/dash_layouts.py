@@ -177,12 +177,22 @@ def generate_graphs_layout(days_range: list[int, int]) -> html.Div:
 							),
 							dbc.Col(
 								auxfun_dashboard.generate_standard_graph(
-									"time-alone-bar", css_class="plot-500"
+									"social-stability", css_class="plot-500"
 								),
-								width=6,
+								width=6,	
 							),
 						],
 					),
+					dbc.Row(
+						[
+							dbc.Col(
+								auxfun_dashboard.generate_standard_graph(
+									"time-alone-bar", css_class="plot-500"
+								),
+								width=6,								
+							)
+						]
+					)
 				],	fluid=True,
 			),
 		],

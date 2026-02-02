@@ -71,7 +71,7 @@ def plot_time_alone(
 				color="animal_id",
 				color_discrete_sequence=colors,
 				hover_data=["animal_id", "cage", "day", "time_alone"],
-				title="Time spent alone",
+				title="<b>Time spent alone</b>",
 				barmode="group",
 			)
 		case "mean":
@@ -82,7 +82,7 @@ def plot_time_alone(
 				color="animal_id",
 				color_discrete_sequence=colors,
 				hover_data=["animal_id", "cage", "day", "time_alone"],
-				title="Time spent alone",
+				title="<b>Time spent alone</b>",
 				boxmode="group",
 				points="outliers",
 			)
@@ -444,8 +444,8 @@ def plot_metrics_polar(
 def plot_network_graph(
 	connections: pl.DataFrame,
 	nodes: pl.DataFrame | None,
-	animals,
-	colors,
+	animals: list[str],
+	colors: list[str],
 	graph_type: Literal["chasings", "sociability"],
 ) -> tuple[go.Figure, pl.DataFrame]:
 	"""Plots network graph of social structure."""
@@ -494,3 +494,35 @@ def plot_network_graph(
 	)
 
 	return fig, connections
+
+
+def plot_social_stability(
+	df: pl.DataFrame | None,
+	animals: list[str],
+	colors: list[str],
+) -> tuple[go.Figure, pl.DataFrame]:
+	"""Plots the stability of a social relationship based on time spent together."""
+	fig = px.scatter(
+		df,
+		x="stability",
+		y="proportion_together",
+		color="animal_id",
+		color_discrete_map={animal: color for animal, color in zip(animals, colors)},
+		hover_data={"animal_id", "animal_id_2"},
+		range_x=[0, 1],
+		range_y=[0, 1],
+		range_color=[0, 1],
+		title="<b>Relationship stability</b>",
+	)
+
+	fig.update_layout(
+		xaxis=dict(
+			title="Relationship stability",
+		),
+		yaxis=dict(
+			title="Median proportion together",
+		),
+	)
+	fig.update_traces(marker_size=12)
+
+	return fig, df

@@ -202,24 +202,20 @@ def prep_ranking_over_time(store: dict[str, pl.DataFrame]) -> pl.DataFrame:
 
 
 def prep_ranking_day_stability(store: dict[str, pl.DataFrame]) -> pl.DataFrame:
-    """Prepare daily dominance ranking using the last hour of each day."""
-    ranking = store['ranking']
-    daily_rank = (
-        ranking
-        .group_by(["day", "animal_id"])
-        .agg(
-            pl.col("ordinal").last(),
-        )
-        .with_columns(
-            pl.col("ordinal")
-            .rank(method="average", descending=True)
-            .over("day")
-            .alias("rank")
-        )
+	"""Prepare daily dominance ranking using the last hour of each day."""
+	ranking = store["ranking"]
+	daily_rank = (
+		ranking.group_by(["day", "animal_id"])
+		.agg(
+			pl.col("ordinal").last(),
+		)
+		.with_columns(
+			pl.col("ordinal").rank(method="average", descending=True).over("day").alias("rank")
+		)
 		.sort("day", "rank")
-    )
+	)
 
-    return daily_rank
+	return daily_rank
 
 
 def prep_polar_df(
@@ -468,7 +464,8 @@ def prep_chasings_line(
 			join_df,
 			on=["chaser", "chased", "hour", "day"],
 			how="right",
-		).fill_null(0)
+		)
+		.fill_null(0)
 		.group_by("day", "hour", "chaser")
 		.agg(pl.sum("chasings"))
 		.group_by("hour", "chaser")
@@ -543,7 +540,8 @@ def prep_activity_line(
 			join_df,
 			on=["animal_id", "hour", "day"],
 			how="right",
-		).fill_null(0)
+		)
+		.fill_null(0)
 		.group_by("hour", "animal_id")
 		.agg(
 			pl.sum("n_detections").alias("total"),
@@ -753,3 +751,46 @@ def prep_network_sociability(
 	).collect(engine="in-memory")
 
 	return connections
+
+
+def prep_social_stability(
+	store: dict[str, pl.DataFrame],
+	phase_type: list[str],
+	days_range: list[int, int],
+) -> pl.DataFrame:
+	"""Return a dataframe showing proportion together and stability of the relationship"""
+	mda = (pl.col("proportion_together") - pl.median("proportion_together")).abs().median()
+
+	df = store["incohort_sociability"].lazy()
+
+	df = pl.concat(
+		[
+			df,
+			df.rename({"animal_id": "animal_id_2", "animal_id_2": "animal_id"}),
+		]
+	)
+
+	df = (
+		df.filter(
+			pl.col("phase").is_in(phase_type),
+			pl.col("day").is_between(*days_range),
+		)
+		.group_by("day", "animal_id", "animal_id_2")
+		.agg(pl.mean("proportion_together"))
+		.sort("animal_id", "animal_id_2", "day")
+		.group_by("animal_id", "animal_id_2")
+		.agg(
+			(
+				1
+				- (
+					mda / (pl.median("proportion_together") + 1e-10)
+				)  # avoid div by 0 and hence NaN stability
+			)
+			.clip(0, 1)
+			.alias("stability"),
+			pl.median("proportion_together"),
+		)
+		.sort('animal_id')
+	).collect(engine="in-memory")
+
+	return df
