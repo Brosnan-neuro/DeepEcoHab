@@ -8,19 +8,21 @@ from deepecohab.utils.auxfun_plots import PlotConfig, PlotRegistry
 plot_registry = PlotRegistry()
 
 
-@plot_registry.register("ranking-line", dependencies=["store", "animals", "animal_colors"])
+@plot_registry.register(
+	"ranking-line",
+	dependencies=["store", "animals", "animal_colors", "ranking_switch"],
+)
 def ranking_over_time(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
-	"""Generates a line plot showing the evolution of animal rankings over time.
+	"""Generates ranking plots either over time or as day-to-day stability."""
 
-	Tracks the ordinal rank of each animal across days and hours to visualize
-	changes in social hierarchy.
+	match cfg.ranking_switch:
+		case "intime":
+			df = auxfun_plots.prep_ranking_over_time(cfg.store)
+			return plot_factory.plot_ranking_line(df, cfg.animals, cfg.animal_colors)
 
-	Returns:
-	    A tuple containing the Plotly Figure and the processed Polars DataFrame.
-	"""
-	df = auxfun_plots.prep_ranking_over_time(cfg.store)
-
-	return plot_factory.plot_ranking_line(df, cfg.animal_colors, cfg.animals)
+		case "stability":
+			df = auxfun_plots.prep_ranking_day_stability(cfg.store)
+			return plot_factory.plot_ranking_stability(df, cfg.animals, cfg.animal_colors)
 
 
 @plot_registry.register(
@@ -130,11 +132,8 @@ def chasings_line(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	"activity-bar",
 	dependencies=[
 		"store",
-		"animals",
 		"days_range",
-		"animal_colors",
 		"phase_type",
-		"positions",
 		"position_colors",
 		"position_switch",
 		"agg_switch",
@@ -149,9 +148,7 @@ def activity(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	Returns:
 	    A tuple containing the Plotly Figure and the processed Polars DataFrame.
 	"""
-	df = auxfun_plots.prep_activity(
-		cfg.store, cfg.days_range, cfg.phase_type, cfg.animals, cfg.positions
-	)
+	df = auxfun_plots.prep_activity(cfg.store, cfg.days_range, cfg.phase_type)
 
 	return plot_factory.plot_activity(df, cfg.position_colors, cfg.position_switch, cfg.agg_switch)
 
@@ -250,7 +247,8 @@ def pairwise_sociability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 
 
 @plot_registry.register(
-	"cohort-heatmap", dependencies=["store", "animals", "phase_type", "days_range"]
+	"cohort-heatmap",
+	dependencies=["store", "animals", "phase_type", "days_range", "sociability_switch"],
 )
 def within_cohort_sociability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	"""Generates a normalized heatmap of sociability within the entire cohort.
@@ -265,7 +263,7 @@ def within_cohort_sociability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]
 	    A tuple containing the Plotly Figure and the processed Polars DataFrame.
 	"""
 	img = auxfun_plots.prep_within_cohort_sociability(
-		cfg.store, cfg.phase_type, cfg.animals, cfg.days_range
+		cfg.store, cfg.phase_type, cfg.animals, cfg.days_range, cfg.sociability_switch
 	)
 
 	return plot_factory.plot_within_cohort_heatmap(img, cfg.animals)
@@ -273,7 +271,7 @@ def within_cohort_sociability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]
 
 @plot_registry.register(
 	"time-alone-bar",
-	dependencies=["store", "phase_type", "days_range", "agg_switch", "position_colors"],
+	dependencies=["store", "phase_type", "days_range", "agg_switch", "animal_colors"],
 )
 def time_alone(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	"""Generates a stacked bar plot of time spent alone.
@@ -289,7 +287,7 @@ def time_alone(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	"""
 	df = auxfun_plots.prep_time_alone(cfg.store, cfg.phase_type, cfg.days_range)
 
-	return plot_factory.plot_time_alone(df, cfg.position_colors, cfg.agg_switch)
+	return plot_factory.plot_time_alone(df, cfg.animal_colors, cfg.agg_switch)
 
 
 @plot_registry.register(
@@ -310,3 +308,23 @@ def network_sociability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	return plot_factory.plot_network_graph(
 		connections, None, cfg.animals, cfg.animal_colors, "sociability"
 	)
+
+
+@plot_registry.register(
+	"social-stability",
+	dependencies=["store", "animals", "animal_colors", "phase_type", "days_range"],
+)
+def social_stability(cfg: PlotConfig) -> tuple(go.Figure, pl.DataFrame):
+	"""Generates a social stability scatter plot.
+
+	Visualizes stability of a relationship of every pair across chosen days 
+ 	based on proportional time spent together and coefficient of variation like metric
+	calculated through median absolute deviation.
+
+	Returns:
+	    A tuple containing the Plotly Figure and the processed Polars DataFrame.
+	"""
+ 
+	df = auxfun_plots.prep_social_stability(cfg.store, cfg.phase_type, cfg.days_range)
+ 
+	return plot_factory.plot_social_stability(df, cfg.animals, cfg.animal_colors)

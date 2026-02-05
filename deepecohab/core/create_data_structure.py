@@ -1,7 +1,7 @@
 import datetime as dt
 from pathlib import Path
 from typing import Literal, Any
-from zoneinfo import ZoneInfo
+from zoneinfo import available_timezones, ZoneInfo
 
 import polars as pl
 from polars.exceptions import ComputeError
@@ -137,6 +137,18 @@ def apply_timezone_fix(frame: pl.DataFrame | pl.LazyFrame, timezone: ZoneInfo) -
 	)
 
 
+def sanitize_timezone(timezone: str) -> ZoneInfo:
+	"""Auxfun to check timezone correctness"""
+	if timezone is None:
+		return get_localzone()
+	elif isinstance(timezone, str) and timezone in available_timezones():
+		return ZoneInfo(timezone)
+	else:
+		raise ValueError(
+			"Provided timezone not in available timezones or wrong type. To check available timezones run zoneinfo.available_timezones()"
+		)
+
+
 @df_registry.register("padded_df")
 def create_padded_df(
 	config_path: Path | str | dict,
@@ -168,34 +180,41 @@ def create_padded_df(
 
 	results_path = Path(cfg["project_location"]) / "results"
 
+	relevant_cols = [
+		"animal_id",
+		"datetime",
+		"phase",
+		"phase_count",
+		"time_spent",
+		"position",
+		"antenna",
+	]
+
+	lf = lf.select(relevant_cols)
+
 	animals_lf = lf.select("animal_id").unique()
 
 	full_phase_lf = auxfun.get_phase_edge_grid(lf, cfg)
 
 	grid_lf = animals_lf.join(full_phase_lf, how="cross")
 
-	full_lf = grid_lf.join(
-		lf, 
-		on=['animal_id', 'phase', 'phase_count'], 
-		how = "left"
-		).filter(
-			(pl.col('phase_end')<pl.col('phase_end').max()).over('animal_id')
-			| (pl.col('datetime').is_not_null())
-		).with_columns(
-			pl.coalesce([pl.col("datetime"), pl.col("phase_end")]).alias("datetime")
-		).sort(['animal_id', 'datetime'])
-
+	full_lf = (
+		grid_lf.join(lf, on=["animal_id", "phase", "phase_count"], how="left")
+		.filter(
+			(pl.col("phase_end") < pl.col("phase_end").max()).over("animal_id")
+			| (pl.col("datetime").is_not_null())
+		)
+		.with_columns(pl.coalesce([pl.col("datetime"), pl.col("phase_end")]).alias("datetime"))
+		.sort(["animal_id", "datetime"])
+		.with_columns(pl.col("position").fill_null(strategy="backward").over("animal_id"))
+	)
 	full_lf = full_lf.with_columns(
 		(pl.col("phase") != pl.col("phase").shift(-1).over("animal_id")).alias("mask")
 	)
 
 	extension_lf = full_lf.filter(
-			pl.col("mask"),
-			pl.col('datetime').ne(pl.col('phase_end'))
-		).with_columns(
-		pl.col('phase_end')
-		.alias("datetime")
-	)
+		pl.col("mask"), pl.col("datetime").ne(pl.col("phase_end"))
+	).with_columns(pl.col("phase_end").alias("datetime"))
 
 	padded_lf = pl.concat([full_lf, extension_lf]).sort(["datetime"])
 
@@ -212,7 +231,7 @@ def create_padded_df(
 		.then(pl.col("position").shift(-1).over("animal_id"))
 		.otherwise(pl.col("position"))
 		.alias("position"),
-	).drop("mask")
+	).drop("mask", "phase_end")
 
 	if save_data:
 		padded_lf.sink_parquet(
@@ -341,10 +360,7 @@ def get_ecohab_data_structure(
 		config_path
 	)  # reload config potential animal_id changes due to sanitation
 
-	if not isinstance(timezone, str):
-		timezone: ZoneInfo = get_localzone()
-	else:
-		timezone = ZoneInfo(timezone)
+	timezone = sanitize_timezone(timezone)
 
 	lf = _prepare_columns(cfg, lf)
 
@@ -386,7 +402,6 @@ def get_ecohab_data_structure(
 	lf = get_animal_position(lf, antenna_pairs)
 	lf = lf.drop("COM")
 
-
 	auxfun.add_cages_to_config(config_path)
 	try:
 		cfg["days_range"]
@@ -401,10 +416,13 @@ def get_ecohab_data_structure(
 	positions = auxfun.remove_tunnel_directionality(lf, cfg).collect()['position'].unique().to_list()
 	auxfun.add_positions_to_config(config_path, positions)
 
+	positions = (
+		auxfun.remove_tunnel_directionality(lf, cfg).collect()["position"].unique().to_list()
+	)
+	auxfun.add_positions_to_config(config_path, positions)
+
 	if save_data:
-		lf.sink_parquet(
-			results_path / f"{key}.parquet", compression="lz4", engine="streaming"
-		)
+		lf.sink_parquet(results_path / f"{key}.parquet", compression="lz4", engine="streaming")
 		phase_durations_lf.sink_parquet(
 			results_path / "phase_durations.parquet", engine="streaming"
 		)

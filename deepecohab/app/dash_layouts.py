@@ -14,6 +14,8 @@ def generate_graphs_layout(days_range: list[int, int]) -> html.Div:
 				slider_id="days_range",
 				position_switch_id="position_switch",
 				pairwise_switch_id="pairwise_switch",
+				ranking_switch_id="ranking_switch",
+				sociability_switch_id="sociability_switch",
 				days_range=days_range,
 				include_download=True,
 			),
@@ -21,16 +23,29 @@ def generate_graphs_layout(days_range: list[int, int]) -> html.Div:
 				[
 					# Ranking, network graph, chasings
 					dbc.Row([dbc.Col(html.H2("Social hierarchy"), className="text-left my-4")]),
-					dbc.Row([]),
 					dbc.Row(
 						[
+							dbc.Col(
+								dcc.RadioItems(
+									id="ranking_switch",
+									options=[
+										{"label": "In time", "value": "intime"},
+										{"label": "Day stability", "value": "stability"},
+										],
+									value="intime",
+									),
+								width=1,
+							),
+						]
+					),
+					dbc.Row([
 							dbc.Col(
 								[
 									auxfun_dashboard.generate_standard_graph(
 										"ranking-line", css_class="plot-500"
 									),
 									auxfun_dashboard.generate_standard_graph(
-										"ranking-distribution-line"
+										"ranking-distribution-line", css_class="plot-500"
 									),
 								],
 								width=6,
@@ -117,10 +132,7 @@ def generate_graphs_layout(days_range: list[int, int]) -> html.Div:
 								dcc.RadioItems(
 									id="pairwise_switch",
 									options=[
-										{
-											"label": "Visits",
-											"value": "pairwise_encounters",
-										},
+										{"label": "Visits", "value": "pairwise_encounters"},
 										{"label": "Time", "value": "time_together"},
 									],
 									value="pairwise_encounters",
@@ -151,6 +163,21 @@ def generate_graphs_layout(days_range: list[int, int]) -> html.Div:
 					dbc.Row(
 						[
 							dbc.Col(
+								dcc.RadioItems(
+									id="sociability_switch",
+									options=[
+										{"label": "Time together", "value": "proportion_together"},
+										{"label": "Incohort sociability", "value": "sociability"},
+									],
+									value="proportion_together",
+								),
+								width=2,
+							),
+						], className="mt-5"
+					),
+					dbc.Row(
+						[
+							dbc.Col(
 								auxfun_dashboard.generate_standard_graph(
 									"cohort-heatmap", css_class="plot-500"
 								),
@@ -158,16 +185,25 @@ def generate_graphs_layout(days_range: list[int, int]) -> html.Div:
 							),
 							dbc.Col(
 								auxfun_dashboard.generate_standard_graph(
-									"time-alone-bar", css_class="plot-500"
+									"social-stability", css_class="plot-500"
 								),
-								width=6,
+								width=6,	
 							),
 						],
 					),
-				],
-				fluid=True,
+					dbc.Row(
+						[
+							dbc.Col(
+								auxfun_dashboard.generate_standard_graph(
+									"time-alone-bar", css_class="plot-500"
+								),
+								width=6,								
+							)
+						]
+					)
+				],	fluid=True,
 			),
-		]
+		],
 	)
 
 

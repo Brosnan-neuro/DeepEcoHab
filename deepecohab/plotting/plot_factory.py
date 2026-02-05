@@ -66,23 +66,23 @@ def plot_time_alone(
 		case "sum":
 			fig = px.histogram(
 				df,
-				x="animal_id",
+				x="cage",
 				y="time_alone",
-				color="cage",
+				color="animal_id",
 				color_discrete_sequence=colors,
 				hover_data=["animal_id", "cage", "day", "time_alone"],
-				title="Time spent alone",
+				title="<b>Time spent alone</b>",
 				barmode="group",
 			)
 		case "mean":
 			fig = px.box(
 				df,
-				x="animal_id",
+				x="cage",
 				y="time_alone",
-				color="cage",
+				color="animal_id",
 				color_discrete_sequence=colors,
 				hover_data=["animal_id", "cage", "day", "time_alone"],
-				title="Time spent alone",
+				title="<b>Time spent alone</b>",
 				boxmode="group",
 				points="outliers",
 			)
@@ -200,8 +200,8 @@ def plot_mean_line_per_hour(
 
 def plot_ranking_line(
 	df: pl.DataFrame,
-	colors,
-	animals,
+	animals: list[str],
+	colors: list[tuple[int, int, int, float]],
 ) -> tuple[go.Figure, pl.DataFrame]:
 	"""Plots line graph of ranking over time."""
 	fig = px.line(
@@ -254,6 +254,38 @@ def plot_ranking_distribution(
 		legend=dict(
 			title="animal_id",
 			tracegroupgap=0,
+		),
+	)
+
+	return fig, df
+
+
+def plot_ranking_stability(
+	df: pl.DataFrame,
+	animals: list[str],
+	colors: list[tuple[int, int, int, float]],
+) -> tuple[go.Figure, pl.DataFrame]:
+	"""Plots animal rank on a per day basis"""
+	fig = px.line(
+		df,
+		x="day",
+		y="rank",
+		color="animal_id",
+		color_discrete_map={animal: color for animal, color in zip(animals, colors)},
+		markers=True,
+		title="<b>Daily dominance rank Trajectories</b>",
+	)
+
+	fig.update_layout(
+		title_x=0.5,
+		legend_title_text="Animal ID",
+		yaxis=dict(
+			title="Rank",
+			autorange="reversed",
+			type="category",
+		),
+		xaxis=dict(
+			title="Day",
 		),
 	)
 
@@ -412,8 +444,8 @@ def plot_metrics_polar(
 def plot_network_graph(
 	connections: pl.DataFrame,
 	nodes: pl.DataFrame | None,
-	animals,
-	colors,
+	animals: list[str],
+	colors: list[str],
 	graph_type: Literal["chasings", "sociability"],
 ) -> tuple[go.Figure, pl.DataFrame]:
 	"""Plots network graph of social structure."""
@@ -446,7 +478,7 @@ def plot_network_graph(
 		layout=go.Layout(
 			showlegend=False,
 			hovermode="closest",
-			title=dict(text=title, x=0.01, y=0.95),
+			title=dict(text=title, x=0.5, y=0.95),
 		),
 	)
 
@@ -462,3 +494,35 @@ def plot_network_graph(
 	)
 
 	return fig, connections
+
+
+def plot_social_stability(
+	df: pl.DataFrame | None,
+	animals: list[str],
+	colors: list[str],
+) -> tuple[go.Figure, pl.DataFrame]:
+	"""Plots the stability of a social relationship based on time spent together."""
+	fig = px.scatter(
+		df,
+		x="stability",
+		y="proportion_together",
+		color="animal_id",
+		color_discrete_map={animal: color for animal, color in zip(animals, colors)},
+		hover_data={"animal_id", "animal_id_2"},
+		range_x=[0, 1],
+		range_y=[0, 1],
+		range_color=[0, 1],
+		title="<b>Relationship stability</b>",
+	)
+
+	fig.update_layout(
+		xaxis=dict(
+			title="Relationship stability",
+		),
+		yaxis=dict(
+			title="Median proportion together",
+		),
+	)
+	fig.update_traces(marker_size=12)
+
+	return fig, df

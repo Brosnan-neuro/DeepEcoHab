@@ -17,12 +17,12 @@ from deepecohab.antenna_analysis import (
 from deepecohab.utils.cache_config import launch_cache, get_project_data
 
 ANALYSIS_STEPS = [ # TODO: It should be taken from registry with delisting of some dataframes (the ones made at start of the project)
-	(calculate_incohort_sociability, "Sociability"),
-	(calculate_pairwise_meetings, "Pairwise Meetings"),
-	(calculate_activity, "Activity"),
-	(calculate_cage_occupancy, "Occupancy"),
-	(calculate_chasings, "Chasings"),
+	(calculate_activity, "Activity"),	
+ 	(calculate_chasings, "Chasings"),
 	(calculate_ranking, "Ranking"),
+ 	(calculate_pairwise_meetings, "Pairwise Meetings"),
+ 	(calculate_incohort_sociability, "Sociability"),
+	(calculate_cage_occupancy, "Occupancy"),
 	(calculate_time_alone, "Time Alone"),
 ]
 

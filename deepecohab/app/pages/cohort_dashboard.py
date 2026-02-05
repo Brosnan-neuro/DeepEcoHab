@@ -73,6 +73,8 @@ def render_graphs_layout(cfg):
 		Input("agg_switch", "value"),
 		Input("position_switch", "value"),
 		Input("pairwise_switch", "value"),
+		Input("sociability_switch", "value"),
+		Input("ranking_switch", "value"),
 	],
 	State("project-config-store", "data"),
 )
@@ -82,6 +84,8 @@ def update_plots(
 	agg_switch: str,
 	pos_switch: str,
 	pair_switch: str,
+ 	sociability_switch: str, 
+  	ranking_switch: str,
 	cfg: dict[str, Any],
 ) -> tuple[go.Figure, dict]:
 	plot_name: str = ctx.outputs_grouping[0]["id"]["name"]
@@ -106,6 +110,8 @@ def update_plots(
 		agg_switch=agg_switch,
 		position_switch=pos_switch,
 		pairwise_switch=pair_switch,
+		sociability_switch=sociability_switch,
+		ranking_switch=ranking_switch,
 		animals=animals,
 		animal_colors=animal_colors,
 		cages=cages,
@@ -155,6 +161,8 @@ def update_comparison_plot(switches: list[Any], cfg: dict[str, Any]) -> tuple[go
 		agg_switch=input_dict["agg_switch"],
 		position_switch=input_dict["position_switch"],
 		pairwise_switch=input_dict["pairwise_switch"],
+		sociability_switch=input_dict["sociability_switch"],
+		ranking_switch=input_dict["ranking_switch"],
 		animals=animals,
 		animal_colors=animal_colors,
 		cages=cages,

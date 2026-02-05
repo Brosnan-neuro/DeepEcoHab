@@ -1,9 +1,9 @@
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
 import polars as pl
 
-from deepecohab.antenna_analysis import activity
 from deepecohab.utils import auxfun
 from deepecohab.utils.auxfun import df_registry
 
@@ -48,14 +48,14 @@ def calculate_time_alone(
 	full_group_list = time_lf.join(auxfun.get_animal_cage_grid(cfg), how="cross")
 
 	time_alone = (
-		binary_df.group_by(group_cols)
+		binary_df.group_by(group_cols, maintain_order=True)
 		.agg(pl.len().alias("n"), pl.col("animal_id").first())
 		.filter(pl.col("n") == 1)
 		.with_columns(auxfun.get_phase(cfg), auxfun.get_day())
-		.group_by(result_cols)
+		.group_by(result_cols, maintain_order=True)
 		.agg(pl.len().alias("time_alone"))
 	)
- 
+
 	time_alone = auxfun.get_phase_count(time_alone)
 
 	time_alone = full_group_list.join(time_alone, on=result_cols, how="left").fill_null(0)
@@ -101,15 +101,11 @@ def calculate_pairwise_meetings(
 	cages: list[str] = cfg["cages"]
 
 	lf = (
-		padded_df
-		.filter(pl.col("position").is_in(cages))
+		padded_df.filter(pl.col("position").is_in(cages))
 		.with_columns(
-			(
-       			pl.col("datetime") 
-          		- pl.duration(seconds=pl.col("time_spent"))
-            ).alias("event_start")
+			(pl.col("datetime") - pl.duration(seconds=pl.col("time_spent"))).alias("event_start")
 		)
-		.rename({'datetime': 'event_end'})
+		.rename({"datetime": "event_end"})
 	)
 
 	joined = (
@@ -120,8 +116,8 @@ def calculate_pairwise_meetings(
 			suffix="_2",
 		)
 		.filter(
-      		pl.col("animal_id") < pl.col("animal_id_2"),
-        )
+			pl.col("animal_id") < pl.col("animal_id_2"),
+		)
 		.with_columns(
 			(
 				pl.min_horizontal(["event_end", "event_end_2"])
@@ -135,12 +131,34 @@ def calculate_pairwise_meetings(
 	)
 
 	pairwise_meetings = (
-		joined.group_by("phase", "day", "phase_count", "position", "animal_id", "animal_id_2")
-  		.agg(
+		joined.group_by("phase", "day", "phase_count", "position", "animal_id", "animal_id_2").agg(
 			pl.sum("overlap_duration").alias("time_together"),
 			pl.len().alias("pairwise_encounters"),
 		)
 	).sort(["phase", "day", "phase_count", "position", "animal_id", "animal_id_2"])
+
+	# Perform empty join
+	all_pairs = list(combinations(cfg["animal_ids"], 2))
+	pairs_df = pl.LazyFrame(
+		all_pairs,
+		schema={
+			"animal_id": pl.Enum(cfg["animal_ids"]),
+			"animal_id_2": pl.Enum(cfg["animal_ids"]),
+		},
+		orient="row",
+	)
+
+	cages_df = pl.LazyFrame(cages, schema={"position": pl.Categorical})
+
+	time_grid = pairwise_meetings.select("phase", "day", "phase_count").unique()
+
+	full_grid = time_grid.join(cages_df, how="cross").join(pairs_df, how="cross")
+
+	pairwise_meetings = full_grid.join(
+		pairwise_meetings,
+		on=["phase", "day", "phase_count", "position", "animal_id", "animal_id_2"],
+		how="left",
+	).fill_null(0)
 
 	if save_data:
 		pairwise_meetings.sink_parquet(results_path, compression="lz4", engine="streaming")
@@ -153,7 +171,6 @@ def calculate_incohort_sociability(
 	config_path: dict,
 	save_data: bool = True,
 	overwrite: bool = False,
-	minimum_time: int | float | None = 2,
 ) -> pl.LazyFrame:
 	"""Calculates in-cohort sociability. For more info: DOI:10.7554/eLife.19532.
 
@@ -161,7 +178,6 @@ def calculate_incohort_sociability(
 	    config_path: path to project config file.
 	    save_data: toogles whether to save data.
 	    overwrite: toggles whether to overwrite the data.
-	    minimum_time: sets minimum time together to be considered an interaction - in seconds. Passed to calculate_time_together.
 
 	Returns:
 	    Long format LazyFrame of in-cohort sociability per phase for each possible pair of mice.
@@ -175,18 +191,12 @@ def calculate_incohort_sociability(
 
 	if isinstance(incohort_sociability, pl.LazyFrame):
 		return incohort_sociability
- 
+
 	results_path = Path(cfg["project_location"]) / "results" / f"{key}.parquet"
 
-	padded_df: pl.LazyFrame = auxfun.load_ecohab_data(cfg, key="padded_df")
-
-	phase_durations: pl.LazyFrame = auxfun.get_phase_durations(padded_df, cfg)
-
-	# Get time spent together in cages
-	time_together_df: pl.LazyFrame = calculate_pairwise_meetings(cfg, minimum_time=minimum_time)
-
-	# Get time per position
-	activity_df: pl.LazyFrame = activity.calculate_activity(cfg)
+	phase_durations: pl.LazyFrame = auxfun.load_ecohab_data(config_path, "phase_durations")
+	time_together_df: pl.LazyFrame = auxfun.load_ecohab_data(config_path, "pairwise_meetings")
+	activity_df: pl.LazyFrame = auxfun.load_ecohab_data(config_path, "activity_df")
 
 	core_columns = ["phase", "day", "phase_count", "animal_id", "animal_id_2"]
 
@@ -195,8 +205,10 @@ def calculate_incohort_sociability(
 	).filter(pl.col("animal_id") < pl.col("animal_id_2"))
 
 	incohort_sociability = (
-		time_together_df.join(estimated_proportion_together, on=core_columns + ["position"])
-		.join(phase_durations, on=["phase_count", "phase"])
+		time_together_df.join(
+			estimated_proportion_together, on=core_columns + ["position"], how="left"
+		)
+		.join(phase_durations, on=["phase_count", "phase"], how="left")
 		.with_columns(
 			pl.col("time_together") / pl.col("duration_seconds"),
 			(
@@ -205,9 +217,12 @@ def calculate_incohort_sociability(
 			).alias("chance"),
 		)
 		.group_by(core_columns)
-		.agg((pl.col("time_together") - pl.col("chance")).sum().alias("sociability"))
-		.sort(core_columns)
+		.agg(
+			pl.sum("time_together").alias("proportion_together"),
+			(pl.col("time_together") - pl.col("chance")).sum().alias("sociability"),
 		)
+		.sort(core_columns)
+	)
 
 	if save_data:
 		incohort_sociability.sink_parquet(results_path, compression="lz4", engine="streaming")
