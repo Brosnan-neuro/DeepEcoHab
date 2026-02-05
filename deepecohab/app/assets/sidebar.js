@@ -7,9 +7,16 @@ function waitForSidebar() {
   }
 
   document.addEventListener("mousemove", function (e) {
+
+    const rect = sidebar.getBoundingClientRect();
+
     if (e.clientX <= 10) {
       sidebar.classList.add("visible");
-    } else if (e.clientX > 100) {
+    } else if (
+      e.clientX > 100 || 
+      e.clientY < (rect.top - 50) || 
+      e.clientY > (rect.bottom + 50)
+    ) {
       sidebar.classList.remove("visible");
     }
   });
