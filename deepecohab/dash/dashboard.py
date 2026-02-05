@@ -1,21 +1,21 @@
-from typing import Any
 import sys
 from pathlib import Path
+from typing import Any
 
 import dash
 import dash_bootstrap_components as dbc
-import polars as pl
 import plotly.graph_objects as go
+import polars as pl
 from dash import ctx, dcc, html, no_update
 from dash.dependencies import ALL, MATCH, Input, Output, State
 
-from deepecohab.dash import dash_layouts, dash_plotting
+from deepecohab.dash import dash_layouts
+from deepecohab.plotting.plot_catalog import PlotConfig, plot_registry
 from deepecohab.utils import (
 	auxfun,
 	auxfun_dashboard,
 	auxfun_plots,
 )
-
 
 # Initialize the Dash app
 app = dash.Dash(
@@ -105,15 +105,21 @@ if __name__ == "__main__":
 			Input("agg_switch", "value"),
 			Input("position_switch", "value"),
 			Input("pairwise_switch", "value"),
-      		Input("sociability_switch", "value"),
+			Input("sociability_switch", "value"),
 			Input("ranking_switch", "value"),
 		],
 	)
 	def update_plots(
-		days_range, phase_type, agg_switch, pos_switch, pair_switch, sociability_switch, ranking_switch
+		days_range,
+		phase_type,
+		agg_switch,
+		pos_switch,
+		pair_switch,
+		sociability_switch,
+		ranking_switch,
 	) -> tuple[go.Figure, dict]:
 		plot_name: str = ctx.outputs_grouping[0]["id"]["name"]
-		plot_attributes = dash_plotting.plot_registry.get_dependencies(plot_name)
+		plot_attributes = plot_registry.get_dependencies(plot_name)
 
 		if ctx.triggered_id is not None and ctx.triggered_id not in plot_attributes:
 			return no_update, no_update
@@ -122,14 +128,14 @@ if __name__ == "__main__":
 			[phase_type] if phase_type != "all" else ["dark_phase", "light_phase"]
 		)
 
-		plot_cfg = auxfun_plots.PlotConfig(
+		plot_cfg = PlotConfig(
 			store=store,
 			days_range=days_range,
 			phase_type=phase_list,
 			agg_switch=agg_switch,
 			position_switch=pos_switch,
 			pairwise_switch=pair_switch,
-      		sociability_switch=sociability_switch,
+			sociability_switch=sociability_switch,
 			ranking_switch=ranking_switch,
 			animals=ANIMALS,
 			animal_colors=ANIMAL_COLORS,
@@ -138,7 +144,7 @@ if __name__ == "__main__":
 			position_colors=POSITION_COLORS,
 		)
 
-		fig, data = dash_plotting.plot_registry.get_plot(plot_name, plot_cfg)
+		fig, data = plot_registry.get_plot(plot_name, plot_cfg)
 
 		return fig, auxfun_dashboard.to_store_json(data)
 
@@ -156,7 +162,7 @@ if __name__ == "__main__":
 		input_dict: dict[str, Any] = {
 			item["id"]["type"]: val for item, val in zip(ctx.inputs_list[0], switches)
 		}
-		plot_attributes = dash_plotting.plot_registry.get_dependencies(input_dict["plot-dropdown"])
+		plot_attributes = plot_registry.get_dependencies(input_dict["plot-dropdown"])
 
 		phase_type: list[str] = (
 			[input_dict["phase_type"]]
@@ -164,7 +170,7 @@ if __name__ == "__main__":
 			else ["dark_phase", "light_phase"]
 		)
 
-		plot_cfg = auxfun_plots.PlotConfig(
+		plot_cfg = PlotConfig(
 			store=store,
 			days_range=input_dict["days_range"],
 			phase_type=phase_type,
@@ -172,7 +178,7 @@ if __name__ == "__main__":
 			position_switch=input_dict["position_switch"],
 			pairwise_switch=input_dict["pairwise_switch"],
 			sociability_switch=input_dict["sociability_switch"],
-      		ranking_switch=input_dict["ranking_switch"],
+			ranking_switch=input_dict["ranking_switch"],
 			animals=ANIMALS,
 			animal_colors=ANIMAL_COLORS,
 			cages=CAGES,
@@ -180,7 +186,7 @@ if __name__ == "__main__":
 			position_colors=POSITION_COLORS,
 		)
 
-		fig, data = dash_plotting.plot_registry.get_plot(input_dict["plot-dropdown"], plot_cfg)
+		fig, data = plot_registry.get_plot(input_dict["plot-dropdown"], plot_cfg)
 
 		pairwise_hidden = "pairwise_switch" not in plot_attributes
 		position_hidden = "position_switch" not in plot_attributes

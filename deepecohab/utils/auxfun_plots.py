@@ -1,12 +1,6 @@
 import math
-from dataclasses import dataclass
 from itertools import combinations, product
-from typing import (
-	Any,
-	Callable,
-	Dict,
-	Literal,
-)
+from typing import Literal
 
 import networkx as nx
 import numpy as np
@@ -46,62 +40,6 @@ def color_sampling(
 	colors: list[str] = px.colors.sample_colorscale(cmap, x)
 
 	return colors
-
-
-@dataclass(frozen=True)
-class PlotConfig:
-	"""
-	Immutable container for dashboard state used to configure plot generation.
-
-	This class aggregates UI selections and switch states into a single object
-	passed to the plot factory. NOTE: Consider this as future BaseClass for group
-	analysis.
-	"""
-
-	store: dict
-	days_range: list[int]
-	phase_type: list[str]
-	agg_switch: Literal["sum", "mean"]
-	position_switch: Literal["visits", "time"]
-	pairwise_switch: Literal["time_together", "pairwise_encounters"]
-	sociability_switch: Literal["proportion_together", "sociability"]
-	ranking_switch: Literal["intime", "stability"]
-	animals: list[str]
-	animal_colors: list[str]
-	cages: list[str]
-	positions: list[str]
-	position_colors: list[str]
-
-
-class PlotRegistry:
-	"""Registry for dashboard plots."""
-
-	def __init__(self):
-		self._registry: Dict[str, Callable[[PlotConfig], Any]] = {}
-		self._plot_dependencies: Dict[str, list[str]] = {}
-
-	def register(self, name: str, dependencies: list[str] = None):
-		"""Decorator to register a new plot type."""
-
-		def wrapper(func: Callable[[PlotConfig], Any]):
-			self._registry[name] = func
-			self._plot_dependencies[name] = dependencies
-			return func
-
-		return wrapper
-
-	def get_dependencies(self, name: str) -> list[str]:
-		"""Returns the list of PlotConfig attributes used by a specific plot."""
-		return self._plot_dependencies.get(name, list())
-
-	def get_plot(self, name: str, config: PlotConfig):
-		plotter = self._registry.get(name)
-		if not plotter:
-			return {}
-		return plotter(config)
-
-	def list_available(self) -> list[str]:
-		return list(self._registry.keys())
 
 
 def create_edges_trace(
@@ -790,7 +728,7 @@ def prep_social_stability(
 			.alias("stability"),
 			pl.median("proportion_together"),
 		)
-		.sort('animal_id')
+		.sort("animal_id")
 	).collect(engine="in-memory")
 
 	return df

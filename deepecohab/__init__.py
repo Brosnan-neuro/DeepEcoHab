@@ -17,14 +17,18 @@ from deepecohab.core.create_data_structure import (
 from deepecohab.core.create_project import (
 	create_ecohab_project as create_ecohab_project,
 )
+from deepecohab.plotting.plot_catalog import (
+	plot_registry as plot_registry,
+)
 from deepecohab.utils.auxfun import (
+	df_registry as df_registry,
 	load_ecohab_data as load_ecohab_data,
 	read_config as read_config,
 	run_dashboard as run_dashboard,
 )
-from deepecohab.utils.auxfun import df_registry as df_registry
-from deepecohab.dash.dash_plotting import plot_registry as plot_registry
-from deepecohab.utils.auxfun_plots import set_default_theme as set_default_theme
+from deepecohab.utils.auxfun_plots import (
+	set_default_theme as set_default_theme,
+)
 from deepecohab.version import __version__ as __version__
 
 set_default_theme()

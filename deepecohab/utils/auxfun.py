@@ -2,11 +2,10 @@ import datetime as dt
 import importlib
 import subprocess
 import sys
-from itertools import product
 from pathlib import Path
 from typing import (
-	Callable,
 	Any,
+	Callable,
 )
 
 import polars as pl

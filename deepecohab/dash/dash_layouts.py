@@ -31,14 +31,15 @@ def generate_graphs_layout(days_range: list[int, int]) -> html.Div:
 									options=[
 										{"label": "In time", "value": "intime"},
 										{"label": "Day stability", "value": "stability"},
-										],
+									],
 									value="intime",
-									),
+								),
 								width=1,
 							),
 						]
 					),
-					dbc.Row([
+					dbc.Row(
+						[
 							dbc.Col(
 								[
 									auxfun_dashboard.generate_standard_graph(
@@ -165,7 +166,8 @@ def generate_graphs_layout(days_range: list[int, int]) -> html.Div:
 								),
 								width=2,
 							),
-						], className="mt-5"
+						],
+						className="mt-5",
 					),
 					dbc.Row(
 						[
@@ -179,7 +181,7 @@ def generate_graphs_layout(days_range: list[int, int]) -> html.Div:
 								auxfun_dashboard.generate_standard_graph(
 									"social-stability", css_class="plot-500"
 								),
-								width=6,	
+								width=6,
 							),
 						],
 					),
@@ -189,11 +191,12 @@ def generate_graphs_layout(days_range: list[int, int]) -> html.Div:
 								auxfun_dashboard.generate_standard_graph(
 									"time-alone-bar", css_class="plot-500"
 								),
-								width=6,								
+								width=6,
 							)
 						]
-					)
-				],	fluid=True,
+					),
+				],
+				fluid=True,
 			),
 		],
 	)
