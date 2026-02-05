@@ -12,12 +12,32 @@ from deepecohab.core import create_data_structure, create_project
 from deepecohab.utils.cache_config import launch_cache
 
 
-def is_valid_time(time_str):
+def _is_valid_time(time_str):
 	try:
 		dt.time.strptime(str(time_str), "%H:%M:%S")
 		return True
 	except (ValueError, TypeError):
 		return False
+
+
+def _get_status(idx, val):
+	if not (val and str(val).strip()):
+		return False
+
+	if idx == "proj-loc":
+		try:
+			Path(val)
+			return True
+		except OSError:
+			return False
+
+	if idx == "data-loc":
+		return Path(str(val)).is_dir()
+
+	if idx in ["light-start", "dark-start"]:
+		return _is_valid_time(val)
+
+	return True
 
 
 dash.register_page(__name__, path="/", name="Home")
@@ -72,45 +92,32 @@ def sync_checks(selected):
 	State({"type": "required-input", "index": ALL}, "invalid"),
 	prevent_initial_call=True,
 )
-def validate_and_highlight(values, current_valid_states, current_invalid_states):
-	triggered_id = ctx.triggered_id
-	if not triggered_id:
+def validate_and_highlight(values, current_valid, current_invalid):
+	if not ctx.triggered_id:
 		return no_update
 
-	inputs_info = ctx.inputs_list[0]
+	inputs_meta = ctx.inputs_list[0]
 
-	new_valid_states = []
-	new_invalid_states = []
+	technical_validity = [
+		_get_status(meta["id"]["index"], val) for meta, val in zip(inputs_meta, values)
+	]
 
-	all_technically_valid = []
+	new_valid_ui = []
+	new_invalid_ui = []
 
-	for i, item in enumerate(inputs_info):
-		idx = item["id"]["index"]
-		val = values[i]
-
-		is_empty = not (val and str(val).strip())
-
-		if is_empty:
-			is_valid = False
-		elif idx in ["proj-loc", "data-loc"]:
-			is_valid = Path(str(val)).is_dir()
-		elif idx in ["light-start", "dark-start"]:
-			is_valid = is_valid_time(val)
+	for meta, is_valid, old_v, old_inv in zip(
+		inputs_meta, technical_validity, current_valid, current_invalid
+	):
+		if meta["id"] == ctx.triggered_id:
+			new_valid_ui.append(is_valid)
+			new_invalid_ui.append(not is_valid)
 		else:
-			is_valid = True
+			new_valid_ui.append(old_v)
+			new_invalid_ui.append(old_inv)
 
-		all_technically_valid.append(is_valid)
+	button_disabled = not all(technical_validity)
 
-		if item["id"] == triggered_id:
-			new_valid_states.append(is_valid)
-			new_invalid_states.append(not is_valid)
-		else:
-			new_valid_states.append(current_valid_states[i])
-			new_invalid_states.append(current_invalid_states[i])
-
-	button_disabled = not all(all_technically_valid)
-
-	return button_disabled, new_valid_states, new_invalid_states
+	return button_disabled, new_valid_ui, new_invalid_ui
 
 
 @callback(
@@ -160,6 +167,10 @@ def _create_project(
 	id_list = [i.strip() for i in animals.split(",")] if animals else None
 	is_custom = "custom" in layouts
 	is_field = "field" in layouts
+
+	project_location = Path(loc)
+	if not project_location.is_dir():
+		project_location.mkdir(parents=True, exist_ok=True)
 
 	try:
 		config_path = create_project.create_ecohab_project(
