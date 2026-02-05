@@ -18,7 +18,7 @@ def get_project_data(config: dict):
 		return {}
 
 	return {
-		name.stem: auxfun.load_ecohab_data(config, name, return_df=True)
+		name: auxfun.load_ecohab_data(config, name, return_df=True)
 		for name in auxfun.df_registry.list_available()
 		if "binary" not in str(name)
 	}

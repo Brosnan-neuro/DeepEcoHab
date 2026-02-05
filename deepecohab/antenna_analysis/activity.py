@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
+
 from deepecohab.utils import auxfun
 from deepecohab.utils.auxfun import df_registry
 

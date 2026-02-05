@@ -1,16 +1,15 @@
+import base64
 import datetime as dt
 from pathlib import Path
+
 import dash
 import dash_bootstrap_components as dbc
-import base64
 import toml
-from dash import dcc, html, Input, Output, State, callback, no_update, ALL, ctx
+from dash import ALL, Input, Output, State, callback, ctx, no_update
 
-import polars as pl
-
-from deepecohab.core import create_project
-from deepecohab.core import create_data_structure
-from deepecohab.utils.cache_config import get_project_data, launch_cache
+from deepecohab.app.page_layouts import home_layout
+from deepecohab.core import create_data_structure, create_project
+from deepecohab.utils.cache_config import launch_cache
 
 
 def is_valid_time(time_str):
@@ -23,338 +22,7 @@ def is_valid_time(time_str):
 
 dash.register_page(__name__, path="/", name="Home")
 
-modal = dbc.Modal(
-	[
-		dbc.ModalHeader([dbc.ModalTitle("Downloads")]),
-		dbc.ModalBody(
-			[
-				dcc.Upload(
-					id="upload-data",
-					children=html.Div(["Drag and Drop or ", html.A("Select Files")]),
-					style={
-						"width": "100%",
-						"height": "60px",
-						"lineHeight": "60px",
-						"borderWidth": "1px",
-						"borderStyle": "dashed",
-						"borderRadius": "5px",
-						"textAlign": "center",
-						"margin": "10px",
-					},
-				),
-				html.Div(id="output-data-upload"),
-			]
-		),
-	],
-	id="load-project-modal",
-	is_open=False,
-)
-
-layout = dbc.Row(
-	[
-		dbc.Col(
-			[
-				html.H2("Project Configuration", className="h2"),
-				dbc.Card(
-					[
-						dbc.CardBody(
-							[
-								dbc.Label("Project Name:", className="home-label"),
-								dbc.Input(
-									id={"type": "required-input", "index": "proj-name"},
-									placeholder="test_project",
-									required=True,
-									className="filled-input",
-								),
-								dbc.Label("Project Location:", className="home-label"),
-								dbc.Input(
-									id={"type": "required-input", "index": "proj-loc"},
-									placeholder="/etc/home/Documents/projects",
-									required=True,
-									className="filled-input",
-								),
-								dbc.Label("Location of Raw Data:", className="home-label"),
-								dbc.Input(
-									id={"type": "required-input", "index": "data-loc"},
-									placeholder="/etc/home/Documents/data",
-									required=True,
-									className="filled-input",
-								),
-								dbc.Row(
-									[
-										dbc.Col(
-											[
-												dbc.Label(
-													"Start Light Phase:", className="home-label"
-												),
-												dbc.Input(
-													id={
-														"type": "required-input",
-														"index": "light-start",
-													},
-													placeholder="00:00:00",
-													required=True,
-													className="filled-input",
-												),
-											],
-											width=6,
-										),
-										dbc.Col(
-											[
-												dbc.Label(
-													"Start Dark Phase:", className="home-label"
-												),
-												dbc.Input(
-													id={
-														"type": "required-input",
-														"index": "dark-start",
-													},
-													placeholder="12:00:00",
-													required=True,
-													className="filled-input",
-												),
-											],
-											width=6,
-										),
-									],
-									className="mb-3",
-								),
-								dbc.Button(
-									"Optional Settings",
-									id="opt-btn",
-									color="link",
-									size="sm",
-									className="p-0 mb-2",
-								),
-								dbc.Collapse(
-									html.Div(
-										[
-											dbc.Row(
-												[
-													dbc.Col(
-														[
-															dbc.Label(
-																"Start datetime:",
-																className="home-label",
-															),
-															dbc.Input(
-																id="experiment-start",
-																placeholder="2024-11-05 00:00:00",
-																value=None,
-																className="filled-input",
-															),
-														],
-														width=6,
-													),
-													dbc.Col(
-														[
-															dbc.Label(
-																"End datetime:",
-																className="home-label",
-															),
-															dbc.Input(
-																id="experiment-end",
-																placeholder="2024-11-29 12:00:00",
-																value=None,
-																className="filled-input",
-															),
-														],
-														width=6,
-													),
-												],
-												className="mb-3",
-											),
-											dbc.Row(
-												[
-													dbc.Col(
-														[
-															dbc.Label(
-																"Data extension",
-																class_name="home-label",
-															),
-															dbc.Input(
-																id="file_ext",
-																placeholder="txt",
-																value="txt",
-																className="filled-input",
-															),
-														]
-													),
-													dbc.Col(
-														[
-															dbc.Label(
-																"Data prefix",
-																class_name="home-label",
-															),
-															dbc.Input(
-																id="file_prefix",
-																placeholder="COM",
-																value="COM",
-																className="filled-input",
-															),
-														]
-													),
-													dbc.Col(
-														[
-															dbc.Label(
-																"Timezone", class_name="home-label"
-															),
-															dbc.Input(
-																id="timezone",
-																placeholder="Europe/Warsaw",
-																value="Europe/Warsaw",
-																className="filled-input",
-															),
-														]
-													),
-												]
-											),
-											dbc.Row(
-												[
-													dbc.Col(
-														[
-															dbc.Label(
-																"Animal IDs:",
-																class_name="home-label",
-															),
-															dbc.Input(
-																id="animal-ids",
-																placeholder="ID_01, ID_02, etc.",
-																value=None,
-																className="filled-input",
-															),
-														],
-														width=7,
-													),
-													dbc.Col(
-														[
-															dbc.Label(
-																"Sanitize IDs:",
-																class_name="home-label",
-															),
-															dbc.Label(
-																"Min antenna crossings:",
-																class_name="home-label",
-															),
-														]
-													),
-													dbc.Col(
-														[
-															dbc.Checkbox(
-																id="sanitize-check",
-																value=True,
-																class_name="checkbox",
-															),
-															dbc.Input(
-																id="min-cross",
-																placeholder=100,
-																value=100,
-																type="number",
-																step=1,
-																class_name="filled-input mb-0",
-															),
-														]
-													),
-												],
-												align="end",
-											),
-											dbc.Row(
-												[
-													dbc.Col(
-														[
-															dbc.Label(
-																"Layout settings:",
-																className="home-label",
-															),
-															dbc.Checklist(
-																options=[
-																	{
-																		"label": " Custom layout",
-																		"value": "custom",
-																	},
-																	{
-																		"label": " Field layout",
-																		"value": "field",
-																	},
-																],
-																value=[],
-																id="layout-checks",
-																inline=True,
-																className="mb-3",
-															),
-														]
-													),
-												]
-											),
-										]
-									),
-									id="opt-collapse",
-									is_open=False,
-								),
-								dbc.Row(
-									[
-										dbc.Col(
-											dbc.Button(
-												"Create Project",
-												id="create-project-btn",
-												color="primary",
-												disabled=True,
-												className="w-100 mt-3",
-												n_clicks=0,
-											),
-											width=4,
-										),
-										dbc.Col(
-											dbc.Container(
-												[
-													dbc.Button(
-														"Load project",
-														id="load-project",
-														color="primary",
-														className="w-100 mt-3",
-														n_clicks=0,
-													),
-													modal,
-												]
-											),
-											width=4,
-										),
-										dbc.Col(
-											dbc.Button(
-												"Clear Session",
-												id="clear-session-btn",
-												disabled=True,
-												className="w-100 mt-3",
-												n_clicks=0,
-											)
-										),
-									]
-								),
-							]
-						)
-					],
-					className="shadow",
-				),
-				html.Div(
-					id="toast-container",
-					className="position-fixed top-0 end-0 p-3 txt",
-					style={"zIndex": 1050},
-				),
-			],
-			xs=12,
-			sm=12,
-			md=8,
-			lg=6,
-		),
-		dbc.Col(
-			html.Img(src="assets/logo_test.png", width=500, height=500),
-			className="d-flex justify-content-center align-items-center",
-			style={"height": "100vh"},
-		),
-	],
-	justify="left",
-	align="center",
-)
+layout = home_layout.generate_layout()
 
 
 @callback(
@@ -476,7 +144,7 @@ def _create_project(
 	data,
 	light,
 	dark,
-	ext,
+	ext,  # placeholder for now
 	prefix,
 	tz,
 	animals,
@@ -566,10 +234,9 @@ def load_config_to_store(contents, filename):
 		return [no_update] * 3
 
 	try:
-		content_type, content_string = contents.split(",")
+		content_string = contents.split(",")[-1]
 		decoded = base64.b64decode(content_string).decode("utf-8")
 		config_dict = toml.loads(decoded)
-		get_project_data(config_dict)
 
 		return [
 			config_dict,
@@ -587,7 +254,7 @@ def load_config_to_store(contents, filename):
 		error_toast = dbc.Toast(
 			f"Error: {str(e)}", header="Load Error", icon="danger", className="custom-toast"
 		)
-		return [no_update, no_update, no_update, no_update, no_update, no_update, True, error_toast]
+		return [no_update, True, error_toast]
 
 
 @callback(

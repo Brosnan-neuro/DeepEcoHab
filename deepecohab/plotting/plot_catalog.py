@@ -1,9 +1,73 @@
+from dataclasses import dataclass
+from typing import (
+	Any,
+	Callable,
+	Dict,
+	Literal,
+)
+
 import plotly.graph_objects as go
 import polars as pl
 
 from deepecohab.plotting import plot_factory
 from deepecohab.utils import auxfun_plots
-from deepecohab.utils.auxfun_plots import PlotConfig, PlotRegistry
+
+
+@dataclass(frozen=True)
+class PlotConfig:
+	"""
+	Immutable container for dashboard state used to configure plot generation.
+
+	This class aggregates UI selections and switch states into a single object
+	passed to the plot factory. NOTE: Consider this as future BaseClass for group
+	analysis.
+	"""
+
+	store: dict
+	days_range: list[int]
+	phase_type: list[str]
+	agg_switch: Literal["sum", "mean"]
+	position_switch: Literal["visits", "time"]
+	pairwise_switch: Literal["time_together", "pairwise_encounters"]
+	sociability_switch: Literal["proportion_together", "sociability"]
+	ranking_switch: Literal["intime", "stability"]
+	animals: list[str]
+	animal_colors: list[str]
+	cages: list[str]
+	positions: list[str]
+	position_colors: list[str]
+
+
+class PlotRegistry:
+	"""Registry for dashboard plots."""
+
+	def __init__(self):
+		self._registry: Dict[str, Callable[[PlotConfig], Any]] = {}
+		self._plot_dependencies: Dict[str, list[str]] = {}
+
+	def register(self, name: str, dependencies: list[str] = None):
+		"""Decorator to register a new plot type."""
+
+		def wrapper(func: Callable[[PlotConfig], Any]):
+			self._registry[name] = func
+			self._plot_dependencies[name] = dependencies
+			return func
+
+		return wrapper
+
+	def get_dependencies(self, name: str) -> list[str]:
+		"""Returns the list of PlotConfig attributes used by a specific plot."""
+		return self._plot_dependencies.get(name, list())
+
+	def get_plot(self, name: str, config: PlotConfig):
+		plotter = self._registry.get(name)
+		if not plotter:
+			return {}
+		return plotter(config)
+
+	def list_available(self) -> list[str]:
+		return list(self._registry.keys())
+
 
 plot_registry = PlotRegistry()
 
@@ -317,14 +381,14 @@ def network_sociability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 def social_stability(cfg: PlotConfig) -> tuple(go.Figure, pl.DataFrame):
 	"""Generates a social stability scatter plot.
 
-	Visualizes stability of a relationship of every pair across chosen days 
- 	based on proportional time spent together and coefficient of variation like metric
+	Visualizes stability of a relationship of every pair across chosen days
+	based on proportional time spent together and coefficient of variation like metric
 	calculated through median absolute deviation.
 
 	Returns:
 	    A tuple containing the Plotly Figure and the processed Polars DataFrame.
 	"""
- 
+
 	df = auxfun_plots.prep_social_stability(cfg.store, cfg.phase_type, cfg.days_range)
- 
+
 	return plot_factory.plot_social_stability(df, cfg.animals, cfg.animal_colors)

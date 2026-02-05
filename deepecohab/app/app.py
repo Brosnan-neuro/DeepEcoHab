@@ -1,10 +1,8 @@
 import dash
 import dash_bootstrap_components as dbc
-
-from dash import html, dcc
+from dash import dcc, html
 
 from deepecohab.utils.cache_config import background_manager
-
 
 app = dash.Dash(
 	__name__,
@@ -77,4 +75,4 @@ app.layout = html.Div(
 )
 
 if __name__ == "__main__":
-	app.run(debug=False, port=8050)
+	app.run(debug=True, port=8050)

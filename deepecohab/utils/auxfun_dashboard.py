@@ -5,13 +5,12 @@ import zipfile
 from argparse import ArgumentParser
 from typing import Any, Literal
 
-
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import polars as pl
 from dash import dcc, exceptions, html
 
-from deepecohab.plotting.dash_plotting import plot_registry
+from deepecohab.plotting.plot_catalog import plot_registry
 from deepecohab.utils.auxfun import df_registry
 
 COMMON_CFG = {"displayModeBar": False}
@@ -24,7 +23,7 @@ def generate_settings_block(
 	days_range: list[int, int],
 	position_switch_id: dict | str | None = None,
 	pairwise_switch_id: dict | str | None = None,
-  sociability_switch_id: dict | str | None = None,
+	sociability_switch_id: dict | str | None = None,
 	ranking_switch_id: dict | str | None = None,
 	include_download: bool = False,
 	comparison_layout: bool = False,
@@ -174,7 +173,7 @@ def generate_settings_block(
 									),
 								],
 							),
-              html.Div(
+							html.Div(
 								id={
 									"container": sociability_switch_id["type"],
 									"side": sociability_switch_id["side"],
@@ -187,8 +186,14 @@ def generate_settings_block(
 											id=sociability_switch_id,
 											inline=True,
 											options=[
-												{"label": "Time together", "value": "proportion_together"},
-												{"label": "Incohort sociability", "value": "sociability"},
+												{
+													"label": "Time together",
+													"value": "proportion_together",
+												},
+												{
+													"label": "Incohort sociability",
+													"value": "sociability",
+												},
 											],
 											value="proportion_together",
 											labelStyle={
@@ -199,7 +204,7 @@ def generate_settings_block(
 									),
 								],
 							),
-              html.Div(
+							html.Div(
 								id={
 									"container": ranking_switch_id["type"],
 									"side": ranking_switch_id["side"],
@@ -264,7 +269,7 @@ def generate_comparison_block(side: str, days_range: list[int, int]) -> html.Div
 				days_range=days_range,
 				position_switch_id={"type": "position_switch", "side": side},
 				pairwise_switch_id={"type": "pairwise_switch", "side": side},
-        sociability_switch_id={"type": "sociability_switch", "side": side},
+				sociability_switch_id={"type": "sociability_switch", "side": side},
 				ranking_switch_id={"type": "ranking_switch", "side": side},
 				comparison_layout=True,
 			),

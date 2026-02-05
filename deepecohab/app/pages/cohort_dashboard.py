@@ -1,18 +1,17 @@
 from typing import Any
 
 import dash
-import polars as pl
 import plotly.graph_objects as go
-from dash import ctx, dcc, html, no_update, callback
+import polars as pl
+from dash import callback, ctx, dcc, html, no_update
 from dash.dependencies import ALL, MATCH, Input, Output, State
 
-from deepecohab.app import dash_layouts
-from deepecohab.plotting import dash_plotting
+from deepecohab.app.page_layouts import cohort_dashboard_layout
+from deepecohab.plotting import plot_catalog
 from deepecohab.utils import (
 	auxfun_dashboard,
 	auxfun_plots,
 )
-
 from deepecohab.utils.cache_config import get_project_data
 
 dash.register_page(__name__, path="/cohort_dashboard", name="Cohort Dashboard")
@@ -56,8 +55,8 @@ def render_graphs_layout(cfg):
 
 	current_days_range = cfg.get("days_range", [0, 1])
 
-	dashboard_layout = dash_layouts.generate_graphs_layout(current_days_range)
-	comparison_tab = dash_layouts.generate_comparison_layout(current_days_range)
+	dashboard_layout = cohort_dashboard_layout.generate_graphs_layout(current_days_range)
+	comparison_tab = cohort_dashboard_layout.generate_comparison_layout(current_days_range)
 
 	return dashboard_layout, comparison_tab
 
@@ -84,12 +83,12 @@ def update_plots(
 	agg_switch: str,
 	pos_switch: str,
 	pair_switch: str,
- 	sociability_switch: str, 
-  	ranking_switch: str,
+	sociability_switch: str,
+	ranking_switch: str,
 	cfg: dict[str, Any],
 ) -> tuple[go.Figure, dict]:
 	plot_name: str = ctx.outputs_grouping[0]["id"]["name"]
-	plot_attributes = dash_plotting.plot_registry.get_dependencies(plot_name)
+	plot_attributes = plot_catalog.plot_registry.get_dependencies(plot_name)
 
 	if ctx.triggered_id is not None and ctx.triggered_id not in plot_attributes:
 		return no_update, no_update
@@ -103,7 +102,7 @@ def update_plots(
 	positions = cfg["positions"]
 	positions_colors = auxfun_plots.color_sampling(animals)
 
-	plot_cfg = auxfun_plots.PlotConfig(
+	plot_cfg = plot_catalog.PlotConfig(
 		store=store,
 		days_range=days_range,
 		phase_type=phase_list,
@@ -119,7 +118,7 @@ def update_plots(
 		position_colors=positions_colors,
 	)
 
-	fig, data = dash_plotting.plot_registry.get_plot(plot_name, plot_cfg)
+	fig, data = plot_catalog.plot_registry.get_plot(plot_name, plot_cfg)
 
 	return fig, auxfun_dashboard.to_store_json(data)
 
@@ -139,7 +138,7 @@ def update_comparison_plot(switches: list[Any], cfg: dict[str, Any]) -> tuple[go
 	input_dict: dict[str, Any] = {
 		item["id"]["type"]: val for item, val in zip(ctx.inputs_list[0], switches)
 	}
-	plot_attributes = dash_plotting.plot_registry.get_dependencies(input_dict["plot-dropdown"])
+	plot_attributes = plot_catalog.plot_registry.get_dependencies(input_dict["plot-dropdown"])
 
 	phase_type: list[str] = (
 		[input_dict["phase_type"]]
@@ -154,7 +153,7 @@ def update_comparison_plot(switches: list[Any], cfg: dict[str, Any]) -> tuple[go
 	positions = cfg["positions"]
 	positions_colors = auxfun_plots.color_sampling(animals)
 
-	plot_cfg = auxfun_plots.PlotConfig(
+	plot_cfg = plot_catalog.PlotConfig(
 		store=store,
 		days_range=input_dict["days_range"],
 		phase_type=phase_type,
@@ -170,7 +169,7 @@ def update_comparison_plot(switches: list[Any], cfg: dict[str, Any]) -> tuple[go
 		position_colors=positions_colors,
 	)
 
-	fig, data = dash_plotting.plot_registry.get_plot(input_dict["plot-dropdown"], plot_cfg)
+	fig, data = plot_catalog.plot_registry.get_plot(input_dict["plot-dropdown"], plot_cfg)
 
 	pairwise_hidden = "pairwise_switch" not in plot_attributes
 	position_hidden = "position_switch" not in plot_attributes

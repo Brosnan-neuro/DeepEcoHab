@@ -1,223 +1,26 @@
 import time
 
 import dash
-import dash_bootstrap_components as dbc
-from dash import dcc
-from dash import html, Input, Output, State, callback, no_update
+from dash import Input, Output, State, callback, no_update
 
-from deepecohab.antenna_analysis import (
-	calculate_incohort_sociability,
-	calculate_pairwise_meetings,
-	calculate_activity,
-	calculate_cage_occupancy,
-	calculate_chasings,
-	calculate_ranking,
-	calculate_time_alone,
-)
-from deepecohab.utils.cache_config import launch_cache, get_project_data
+from deepecohab.app.page_layouts import analysis_layout
+from deepecohab.utils.auxfun import df_registry
+from deepecohab.utils.cache_config import get_project_data, launch_cache
 
-ANALYSIS_STEPS = [ # TODO: It should be taken from registry with delisting of some dataframes (the ones made at start of the project)
-	(calculate_activity, "Activity"),	
- 	(calculate_chasings, "Chasings"),
-	(calculate_ranking, "Ranking"),
- 	(calculate_pairwise_meetings, "Pairwise Meetings"),
- 	(calculate_incohort_sociability, "Sociability"),
-	(calculate_cage_occupancy, "Occupancy"),
-	(calculate_time_alone, "Time Alone"),
+ANALYSIS_STEPS = [
+	(df_registry.get_function("activity_df"), "activity_df"),
+	(df_registry.get_function("cage_occupancy"), "cage_occupancy"),
+	(df_registry.get_function("chasings_df"), "chasings_df"),
+	(df_registry.get_function("ranking"), "ranking"),
+	(df_registry.get_function("pairwise_meetings"), "pairwise_meetings"),
+	(df_registry.get_function("incohort_sociability"), "incohort_sociability"),
+	(df_registry.get_function("time_alone"), "time_alone"),
+	(df_registry.get_function("pairwise_meetings"), "pairwise_meetings"),
 ]
 
 dash.register_page(__name__, path="/analysis", name="Analysis")
 
-layout = [
-	dbc.Row(
-		[
-			dbc.Col(
-				[
-					html.H2("Experiment analysis", className="h2 text-center"),
-				]
-			),
-		]
-	),
-	dbc.Row(
-		[
-			dbc.Col(
-				[
-					dbc.Card(
-						[
-							dbc.CardBody(
-								[
-									html.H3("Antenna analysis", className="h3"),
-									dbc.Row(
-										[
-											dbc.Col(
-												[
-													dbc.Label(
-														"Minimum time together", class_name="mb-3"
-													),
-													dbc.Input(
-														id="styled-numeric-input",
-														type="number",
-														min=2,
-														placeholder="2",
-														class_name="filled-input",
-													),
-												],
-												width=6,
-											),
-										],
-										class_name="mb-4",
-									),
-									dbc.Row(
-										[
-											dbc.Col(
-												[
-													dbc.Label(
-														"Chasing time window", class_name="mb-3"
-													),
-													dcc.RangeSlider(
-														id="chasing_window",
-														min=0,
-														max=5,
-														step=0.1,
-														count=1,
-														value=[0.1, 1.2],
-														marks={i: str(i) for i in [0, 5]},
-														tooltip={
-															"placement": "bottom",
-															"always_visible": False,
-															"style": {
-																"color": "LightSteelBlue",
-																"fontSize": "12px",
-															},
-														},
-														className="dash-slider",
-													),
-												],
-												width=6,
-											),
-										],
-										class_name="mb-4",
-									),
-									dbc.Row(
-										[
-											dbc.Col(
-												[
-													dbc.Button(
-														"Analyze",
-														id="antenna-button",
-														color="primary",
-														n_clicks=0,
-														size="md",
-														disabled=True,
-														class_name="w-100",
-													),
-													html.Div(
-														[
-															dbc.Progress(
-																id="analysis-progress",
-																value=0,
-																striped=True,
-																animated=True,
-																className="mb-3",
-																style={"height": "30px"},
-															),
-															html.P(
-																id="progress-text",
-																className="progress-print",
-															),
-															dcc.Interval(
-																id="progress-interval",
-																interval=200,
-																n_intervals=0,
-																disabled=True,
-															),
-														],
-														className="mt-3",
-													),
-												],
-												width=12,
-											),
-										]
-									),
-								]
-							),
-						]
-					),
-					dbc.Card(
-						[
-							dbc.CardBody(
-								[
-									html.H3("Group analysis", className="h3"),
-									dbc.Row(
-										[html.H4("PLACEHOLDER", className="h4")], class_name="mb-4"
-									),
-									dbc.Row(
-										[html.H4("PLACEHOLDER", className="h4")], class_name="mb-4"
-									),
-									dbc.Row(
-										[
-											dbc.Col(
-												[
-													dbc.Button(
-														"PLACEHOLDER",
-														id="placeholder-button",
-														color="primary",
-														n_clicks=0,
-														size="md",
-														class_name="w-100",
-													),
-												],
-												width=12,
-											),
-										]
-									),
-								]
-							),
-						]
-					),
-				],
-				width=6,
-			),
-			dbc.Col(
-				[
-					dbc.Card(
-						[
-							dbc.CardBody(
-								[
-									html.H3("Pose analysis", className="h3"),
-									dbc.Row(
-										[html.H4("PLACEHOLDER", className="h4")], class_name="mb-4"
-									),
-									dbc.Row(
-										[html.H4("PLACEHOLDER", className="h4")], class_name="mb-4"
-									),
-									dbc.Row(
-										[
-											dbc.Col(
-												[
-													dbc.Button(
-														"PLACEHOLDER",
-														id="placeholder-button2",
-														color="primary",
-														n_clicks=0,
-														size="mg",
-														class_name="w-100",
-													),
-												],
-												width=12,
-											),
-										]
-									),
-								]
-							),
-						]
-					),
-				],
-				width=6,
-			),
-		]
-	),
-]
+layout = analysis_layout.generate_layout()
 
 
 @callback(
@@ -256,9 +59,9 @@ def start_analysis(n_clicks, config, min_time, chasing_window):
 			{"percent": int((i / total_steps) * 100), "msg": f"Running {name}..."},
 		)
 
-		if func == calculate_pairwise_meetings:
+		if name == "pairwise_meetings":
 			func(config, minimum_time=min_time if min_time else 2)
-		elif func == calculate_chasings:
+		elif name == "chasings_df":
 			func(config, chasing_time_window=chasing_window)
 		else:
 			func(config)
@@ -268,7 +71,7 @@ def start_analysis(n_clicks, config, min_time, chasing_window):
 
 	time.sleep(0.5)
 	get_project_data(config)
- 
+
 	return True, True
 
 
