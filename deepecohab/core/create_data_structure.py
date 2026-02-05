@@ -6,7 +6,6 @@ from zoneinfo import ZoneInfo, available_timezones
 import polars as pl
 from polars.exceptions import ComputeError
 from tzlocal import get_localzone
-from zoneinfo import ZoneInfo
 
 from deepecohab.utils import auxfun
 from deepecohab.utils.auxfun import df_registry
@@ -37,7 +36,6 @@ def load_data(
 		)
 	except ComputeError:
 		print("No data found with specified prefix!")
-		
 
 	lf = lf.with_columns(
 		pl.col("file").str.extract(r"([^/\\]+)$").str.split("_").list.get(0).alias("COM")
@@ -274,9 +272,7 @@ def create_binary_df(
 	cages: list[str] = cfg["cages"]
 	animal_ids: list[str] = cfg["animal_ids"]
 
-	animals_lf = auxfun.get_lf_from_enum(
-		animal_ids, "animal_id", sorted=True, col_type=pl.Enum(animal_ids)
-	)
+	animals_lf = pl.LazyFrame(animal_ids, schema={"animal_id": pl.Enum(animal_ids)})
 
 	lf = lf.select(["animal_id", "datetime", "position"]).sort(["animal_id", "datetime"])
 
@@ -412,8 +408,10 @@ def get_ecohab_data_structure(
 	create_binary_df(config_path, lf, save_data, overwrite)
 
 	phase_durations_lf: pl.LazyFrame = auxfun.get_phase_durations(lf, cfg)
- 
-	positions = auxfun.remove_tunnel_directionality(lf, cfg).collect()['position'].unique().to_list()
+
+	positions = (
+		auxfun.remove_tunnel_directionality(lf, cfg).collect()["position"].unique().to_list()
+	)
 	auxfun.add_positions_to_config(config_path, positions)
 
 	positions = (

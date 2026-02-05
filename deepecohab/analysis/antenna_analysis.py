@@ -1,0 +1,530 @@
+import datetime as dt
+from itertools import combinations, product
+from pathlib import Path
+from typing import Any
+
+import polars as pl
+from openskill.models import PlackettLuce
+
+from deepecohab.utils import auxfun
+from deepecohab.utils.auxfun import df_registry
+
+
+@df_registry.register("cage_occupancy")
+def calculate_cage_occupancy(
+	config_path: str | Path | dict,
+	save_data: bool = True,
+	overwrite: bool = False,
+) -> pl.LazyFrame:
+	"""Calculates time spent per animal per phase in every cage.
+
+	Args:
+	    config_path: path to projects' config file or dict with the config.
+	    save_data: toogles whether to save data.
+	    overwrite: toggles whether to overwrite the data.
+
+	Returns:
+	    LazyFrame of time spent in each cage with 1s resolution.
+	"""
+	cfg: dict[str, Any] = auxfun.read_config(config_path)
+	key = "cage_occupancy"
+
+	cage_occupancy: pl.LazyFrame | None = (
+		None if overwrite else auxfun.load_ecohab_data(config_path, key)
+	)
+
+	if isinstance(cage_occupancy, pl.LazyFrame):
+		return cage_occupancy
+
+	results_path = Path(cfg["project_location"]) / "results"
+
+	binary_lf: pl.LazyFrame = auxfun.load_ecohab_data(config_path, "binary_df")
+
+	cols = ["day", "hour", "cage", "animal_id"]
+
+	bounds: tuple[dt.datetime, dt.datetime] = (
+		binary_lf.select(
+			pl.col("datetime").min().dt.truncate("1h").alias("start"),
+			pl.col("datetime").max().dt.truncate("1h").alias("end"),
+		)
+		.collect()
+		.row(0)
+	)
+
+	time_lf = (
+		pl.LazyFrame()
+		.select(pl.datetime_range(bounds[0], bounds[1], "1h").alias("datetime"))
+		.with_columns(auxfun.get_hour(), auxfun.get_day())
+		.drop("datetime")
+	)
+
+	full_group_list = time_lf.join(auxfun.get_animal_cage_grid(cfg), how="cross")
+
+	agg = (
+		binary_lf.with_columns(auxfun.get_hour(), auxfun.get_day())
+		.group_by(cols)
+		.agg(pl.len().alias("time_spent"))
+	)
+
+	cage_occupancy = full_group_list.join(agg, on=cols, how="left").fill_null(0)
+
+	if save_data:
+		cage_occupancy.sink_parquet(
+			results_path / f"{key}.parquet", compression="lz4", engine="streaming"
+		)
+
+	return cage_occupancy
+
+
+@df_registry.register("activity_df")
+def calculate_activity(
+	config_path: str | Path | dict,
+	save_data: bool = True,
+	overwrite: bool = False,
+) -> pl.LazyFrame:
+	"""Calculates time spent and visits to every possible position per phase for every mouse.
+
+	Args:
+	    config_path: path to projects' config file or dict with the config.
+	    save_data: toogles whether to save data.
+	    overwrite: toggles whether to overwrite the data.
+
+	Returns:
+	    LazyFrame of time and visits
+	"""
+	cfg: dict[str, Any] = auxfun.read_config(config_path)
+	key = "activity_df"
+
+	time_per_position_lf: pl.LazyFrame | None = (
+		None if overwrite else auxfun.load_ecohab_data(config_path, key)
+	)
+
+	if isinstance(time_per_position_lf, pl.LazyFrame):
+		return time_per_position_lf
+
+	results_path: Path = Path(cfg["project_location"]) / "results"
+
+	padded_lf: pl.LazyFrame = auxfun.load_ecohab_data(cfg, key="padded_df")
+	padded_lf = auxfun.remove_tunnel_directionality(padded_lf, cfg)
+
+	per_position_lf = padded_lf.group_by(
+		["phase", "day", "phase_count", "position", "animal_id"]
+	).agg(
+		pl.sum("time_spent").alias("time_in_position"),
+		pl.len().alias("visits_to_position"),
+	)
+
+	time_grid = per_position_lf.select("phase", "day", "phase_count").unique()
+	full_grid = time_grid.join(auxfun.get_animal_position_grid(cfg, "positions"), how="cross")
+
+	per_position_lf = full_grid.join(
+		per_position_lf, on=["phase", "day", "phase_count", "position", "animal_id"], how="left"
+	).fill_null(0)
+
+	if save_data:
+		per_position_lf.sink_parquet(
+			results_path / f"{key}.parquet", compression="lz4", engine="streaming"
+		)
+
+	return per_position_lf
+
+
+@df_registry.register("ranking")
+def calculate_ranking(
+	config_path: str | Path | dict,
+	overwrite: bool = False,
+	save_data: bool = True,
+	ranking: dict | None = None,
+) -> pl.LazyFrame:
+	"""Calculate ranking using Plackett Luce algortihm. Each chasing event is a match
+	Args:
+	    config_path: path to project config file.
+	    save_data: toogles whether to save data.
+	    overwrite: toggles whether to overwrite the data.
+	    ranking: optionally, user can pass a dictionary from a different recording of same animals
+	             to start ranking from a certain point instead of 0
+
+	Returns:
+	    LazyFrame of ranking
+	"""
+	cfg: dict[str, Any] = auxfun.read_config(config_path)
+	key = "ranking"
+
+	ranking: pl.LazyFrame | None = None if overwrite else auxfun.load_ecohab_data(config_path, key)
+
+	if isinstance(ranking, pl.LazyFrame):
+		return ranking
+
+	results_path: Path = Path(cfg["project_location"]) / "results"
+
+	match_df: pl.LazyFrame = auxfun.load_ecohab_data(cfg, "match_df").sort("datetime").collect()
+	animal_ids: list[str] = cfg["animal_ids"]
+
+	model = PlackettLuce(limit_sigma=True, balance=True)
+	ranking: dict[str, dict[str, float]] = {player: model.rating() for player in animal_ids}
+
+	rows: list[dict[str, Any]] = []
+
+	for loser_name, winner_name, dtime in match_df.iter_rows():
+		new_ratings = model.rate(
+			[[ranking[loser_name]], [ranking[winner_name]]],
+			ranks=[1, 0],
+		)
+
+		ranking[loser_name] = new_ratings[0][0]
+		ranking[winner_name] = new_ratings[1][0]
+
+		for animal, rating in ranking.items():
+			rows.append(
+				{
+					"animal_id": animal,
+					"mu": rating.mu,
+					"sigma": rating.sigma,
+					"ordinal": round(rating.ordinal(), 3),
+					"datetime": dtime,
+				}
+			)
+
+	ranking_df = pl.LazyFrame(rows).with_columns(
+		auxfun.get_phase(cfg),
+		auxfun.get_day(),
+		auxfun.get_hour(),
+	)
+
+	if save_data:
+		ranking_df.sink_parquet(
+			results_path / "ranking.parquet", compression="lz4", engine="streaming"
+		)
+
+	return ranking
+
+
+@df_registry.register("match_df")
+def get_matches(lf: pl.LazyFrame, results_path: Path, save_data: bool) -> None:
+	"""Creates a lazyframe of matches"""
+	matches = lf.select("animal_id", "animal_id_chasing", "datetime_chasing").rename(
+		{
+			"animal_id": "loser",
+			"animal_id_chasing": "winner",
+			"datetime_chasing": "datetime",
+		}
+	)
+	if save_data:
+		matches.sink_parquet(
+			results_path / "match_df.parquet", compression="lz4", engine="streaming"
+		)
+
+
+@df_registry.register("chasings_df")
+def calculate_chasings(
+	config_path: str | Path | dict,
+	chasing_time_window: list[int, int] = [0.1, 1.2],
+	overwrite: bool = False,
+	save_data: bool = True,
+) -> pl.LazyFrame:
+	"""Calculates chasing events per pair of mice for each phase
+
+	Args:
+	    config_path: path to project config file.
+		chasing_time_window: defines min and max length of the chasing event in seconds.
+	    save_data: toogles whether to save data.
+	    overwrite: toggles whether to overwrite the data.
+
+	Returns:
+	    LazyFrame of chasings
+	"""
+	cfg: dict[str, Any] = auxfun.read_config(config_path)
+	key = "chasings_df"
+
+	chasings: pl.LazyFrame | None = None if overwrite else auxfun.load_ecohab_data(config_path, key)
+
+	if isinstance(chasings, pl.LazyFrame):
+		return chasings
+
+	results_path = Path(cfg["project_location"]) / "results"
+
+	lf: pl.LazyFrame = auxfun.load_ecohab_data(cfg, key="main_df")
+
+	cages: list[str] = cfg["cages"]
+	tunnels: list[str] = cfg["tunnels"]
+
+	chased = lf.filter(
+		pl.col("position").is_in(tunnels),
+	)
+	chasing = lf.with_columns(
+		pl.col("datetime").shift(1).over("animal_id").alias("tunnel_entry"),
+		pl.col("position").shift(1).over("animal_id").alias("prev_position"),
+	)
+
+	intermediate = chased.join(
+		chasing, on=["phase", "day", "hour", "phase_count"], suffix="_chasing"
+	).filter(
+		pl.col("animal_id") != pl.col("animal_id_chasing"),
+		pl.col("position") == pl.col("position_chasing"),
+		pl.col("prev_position").is_in(cages),
+		(pl.col("datetime") - pl.col("tunnel_entry"))
+		.dt.total_seconds(fractional=True)
+		.is_between(*chasing_time_window, "none"),
+		pl.col("datetime") < pl.col("datetime_chasing"),
+	)
+
+	get_matches(intermediate, results_path, save_data)
+
+	chasings = (
+		intermediate.group_by(
+			["phase", "day", "phase_count", "hour", "animal_id_chasing", "animal_id"]
+		)
+		.len(name="chasings")
+		.rename({"animal_id": "chased", "animal_id_chasing": "chaser"})
+	)
+
+	# Perform empty join
+	all_pairs = [
+		(a1, a2) for a1, a2 in list(product(cfg["animal_ids"], cfg["animal_ids"])) if a1 != a2
+	]
+	pairs_df = pl.LazyFrame(
+		all_pairs,
+		schema={
+			"chaser": pl.Enum(cfg["animal_ids"]),
+			"chased": pl.Enum(cfg["animal_ids"]),
+		},
+		orient="row",
+	)
+
+	time_grid = chasings.select("phase", "day", "phase_count").unique()
+
+	full_grid = time_grid.join(pairs_df, how="cross")
+
+	chasings = full_grid.join(
+		chasings,
+		on=["phase", "day", "phase_count", "chaser", "chased"],
+		how="left",
+	).fill_null(0)
+
+	if save_data:
+		chasings.sink_parquet(
+			results_path / f"{key}.parquet", compression="lz4", engine="streaming"
+		)
+
+	return chasings
+
+
+@df_registry.register("time_alone")
+def calculate_time_alone(
+	config_path: Path | str | dict,
+	save_data: bool = True,
+	overwrite: bool = False,
+) -> pl.LazyFrame:
+	"""Calculates time spent alone by animal per phase/day/cage
+
+	Args:
+	    config_path: path to project config file.
+	    save_data: toogles whether to save data.
+	    overwrite: toggles whether to overwrite the data.
+
+	Returns:
+	    DataFrame containing time spent alone in seconds.
+	"""
+	cfg: dict[str, Any] = auxfun.read_config(config_path)
+	key = "time_alone"
+
+	time_alone: pl.LazyFrame | None = (
+		None if overwrite else auxfun.load_ecohab_data(config_path, key)
+	)
+	if isinstance(time_alone, pl.LazyFrame):
+		return time_alone
+
+	results_path = Path(cfg["project_location"]) / "results" / f"{key}.parquet"
+
+	binary_df: pl.LazyFrame = auxfun.load_ecohab_data(config_path, "binary_df")
+
+	group_cols = ["datetime", "cage"]
+	result_cols = ["phase", "day", "animal_id", "cage"]
+
+	time_lf = binary_df.select(
+		auxfun.get_day().alias("day"),
+		auxfun.get_phase(cfg).alias("phase"),
+	).unique()
+
+	full_group_list = time_lf.join(auxfun.get_animal_position_grid(cfg, "cages"), how="cross")
+
+	time_alone = (
+		binary_df.group_by(group_cols, maintain_order=True)
+		.agg(pl.len().alias("n"), pl.col("animal_id").first())
+		.filter(pl.col("n") == 1)
+		.with_columns(auxfun.get_phase(cfg), auxfun.get_day())
+		.group_by(result_cols, maintain_order=True)
+		.agg(pl.len().alias("time_alone"))
+	)
+
+	time_alone = auxfun.get_phase_count(time_alone)
+
+	time_alone = full_group_list.join(time_alone, on=result_cols, how="left").fill_null(0)
+
+	if save_data:
+		time_alone.sink_parquet(results_path, compression="lz4", engine="streaming")
+
+	return time_alone
+
+
+@df_registry.register("pairwise_meetings")
+def calculate_pairwise_meetings(
+	config_path: str | Path | dict,
+	minimum_time: int | float | None = 2,
+	save_data: bool = True,
+	overwrite: bool = False,
+) -> pl.LazyFrame:
+	"""Calculates time spent together and number of meetings by animals on a per phase, day and cage basis. Slow due to the nature of datetime overlap calculation.
+
+	Args:
+	    cfg: dictionary with the project config.
+	    minimum_time: sets minimum time together to be considered an interaction - in seconds i.e., if set to 2 any time spent in the cage together
+	               that is shorter than 2 seconds will be omited.
+	    save_data: toogles whether to save data.
+	    overwrite: toggles whether to overwrite the data.
+
+	Returns:
+	    LazyFrame of time spent together per phase, per cage.
+	"""
+	cfg: dict[str, Any] = auxfun.read_config(config_path)
+	key = "pairwise_meetings"
+
+	pairwise_meetings: pl.LazyFrame | None = (
+		None if overwrite else auxfun.load_ecohab_data(config_path, key)
+	)
+
+	if isinstance(pairwise_meetings, pl.DataFrame):
+		return pairwise_meetings
+
+	results_path = Path(cfg["project_location"]) / "results" / f"{key}.parquet"
+	padded_df = auxfun.load_ecohab_data(cfg, key="padded_df")
+
+	cages: list[str] = cfg["cages"]
+
+	lf = (
+		padded_df.filter(pl.col("position").is_in(cages))
+		.with_columns(
+			(pl.col("datetime") - pl.duration(seconds=pl.col("time_spent"))).alias("event_start")
+		)
+		.rename({"datetime": "event_end"})
+	)
+
+	joined = (
+		lf.join(
+			lf,
+			on=["phase", "day", "phase_count", "position"],
+			how="inner",
+			suffix="_2",
+		)
+		.filter(
+			pl.col("animal_id") < pl.col("animal_id_2"),
+		)
+		.with_columns(
+			(
+				pl.min_horizontal(["event_end", "event_end_2"])
+				- pl.max_horizontal(["event_start", "event_start_2"])
+			)
+			.dt.total_seconds(fractional=True)
+			.round(3)
+			.alias("overlap_duration")
+		)
+		.filter(pl.col("overlap_duration") > minimum_time)
+	)
+
+	pairwise_meetings = (
+		joined.group_by("phase", "day", "phase_count", "position", "animal_id", "animal_id_2").agg(
+			pl.sum("overlap_duration").alias("time_together"),
+			pl.len().alias("pairwise_encounters"),
+		)
+	).sort(["phase", "day", "phase_count", "position", "animal_id", "animal_id_2"])
+
+	# Perform empty join
+	all_pairs = list(combinations(cfg["animal_ids"], 2))
+	temp_df = pl.LazyFrame(
+		[(*p, c) for p, c in product(all_pairs, cfg["positions"])],
+		schema={
+			"animal_id": pl.Enum(cfg["animal_ids"]),
+			"animal_id_2": pl.Enum(cfg["animal_ids"]),
+			"position": pl.Categorical,
+		},
+		orient="row",
+	)
+
+	time_grid = pairwise_meetings.select("phase", "day", "phase_count").unique()
+
+	full_grid = time_grid.join(temp_df, how="cross")
+
+	pairwise_meetings = full_grid.join(
+		pairwise_meetings,
+		on=["phase", "day", "phase_count", "position", "animal_id", "animal_id_2"],
+		how="left",
+	).fill_null(0)
+
+	if save_data:
+		pairwise_meetings.sink_parquet(results_path, compression="lz4", engine="streaming")
+
+	return pairwise_meetings
+
+
+@df_registry.register("incohort_sociability")
+def calculate_incohort_sociability(
+	config_path: dict,
+	save_data: bool = True,
+	overwrite: bool = False,
+) -> pl.LazyFrame:
+	"""Calculates in-cohort sociability. For more info: DOI:10.7554/eLife.19532.
+
+	Args:
+	    config_path: path to project config file.
+	    save_data: toogles whether to save data.
+	    overwrite: toggles whether to overwrite the data.
+
+	Returns:
+	    Long format LazyFrame of in-cohort sociability per phase for each possible pair of mice.
+	"""
+	cfg: dict[str, Any] = auxfun.read_config(config_path)
+	key = "incohort_sociability"
+
+	incohort_sociability: pl.LazyFrame | None = (
+		None if overwrite else auxfun.load_ecohab_data(config_path, key)
+	)
+
+	if isinstance(incohort_sociability, pl.LazyFrame):
+		return incohort_sociability
+
+	results_path = Path(cfg["project_location"]) / "results" / f"{key}.parquet"
+
+	phase_durations: pl.LazyFrame = auxfun.load_ecohab_data(config_path, "phase_durations")
+	time_together_df: pl.LazyFrame = auxfun.load_ecohab_data(config_path, "pairwise_meetings")
+	activity_df: pl.LazyFrame = auxfun.load_ecohab_data(config_path, "activity_df")
+
+	core_columns = ["phase", "day", "phase_count", "animal_id", "animal_id_2"]
+
+	estimated_proportion_together = activity_df.join(
+		activity_df, on=["phase_count", "phase", "position"], suffix="_2"
+	).filter(pl.col("animal_id") < pl.col("animal_id_2"))
+
+	incohort_sociability = (
+		time_together_df.join(
+			estimated_proportion_together, on=core_columns + ["position"], how="left"
+		)
+		.join(phase_durations, on=["phase_count", "phase"], how="left")
+		.with_columns(
+			pl.col("time_together") / pl.col("duration_seconds"),
+			(
+				(pl.col("time_in_position") * pl.col("time_in_position_2"))
+				/ (pl.col("duration_seconds") ** 2)
+			).alias("chance"),
+		)
+		.group_by(core_columns)
+		.agg(
+			pl.sum("time_together").alias("proportion_together"),
+			(pl.col("time_together") - pl.col("chance")).sum().alias("sociability"),
+		)
+		.sort(core_columns)
+	)
+
+	if save_data:
+		incohort_sociability.sink_parquet(results_path, compression="lz4", engine="streaming")
+
+	return incohort_sociability
