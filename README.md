@@ -10,18 +10,18 @@ We keep DeepEcoHab lean to ensure easy integration and fast installation.
 
 <b>Existing Environments</b>: 
 
-If your environment is already running `python>=3.9`, run: `pip install deepecohab`
+If your environment is already running `python>=3.10`, run: `pip install deepecohab`
 
 <b>New Installations</b>: If you are starting from scratch, please follow our guide below:
 
 In the spirit of open-source we suggest usage of [uv](https://docs.astral.sh/uv/). 
 
-To install `uv` copy-paste the command below:
+### <u>To install `uv` copy-paste the command below:</u>
 
-Windows:
+<b>Windows</b>:
 `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
 
-Linux/MacOS:
+<b>Linux/MacOS</b>:
 `$ curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 To install DeepEcoHab please run the following commands line by line in the terminal:
@@ -33,7 +33,7 @@ git clone https://github.com/KonradDanielewski/DeepEcoHab.git
 cd DeepEcoHab
 uv venv
 .venv\Scripts\activate
-uv pip install .
+uv pip install deepecohab
 ```
 
 We recommend using [VSCode](https://code.visualstudio.com/download) with the Jupter extension to run the example notebooks provided in the repository.
