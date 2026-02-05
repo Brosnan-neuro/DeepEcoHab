@@ -7,7 +7,6 @@ def generate_layout(fig):
 		[
 			dbc.Row(
 				[
-					# Side Column for Analysis Filters
 					dbc.Col(
 						[
 							html.H4("Analysis Filters"),
@@ -36,7 +35,6 @@ def generate_layout(fig):
 						width=3,
 						style={"borderRadius": "10px", "minHeight": "70vh"},
 					),
-					# Main Column for Charts
 					dbc.Col(
 						[
 							dbc.Card(

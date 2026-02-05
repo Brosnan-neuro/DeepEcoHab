@@ -2,6 +2,7 @@ import dash
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
+from deepecohab.utils.auxfun_dashboard import generate_sidebar
 from deepecohab.utils.cache_config import background_manager
 
 app = dash.Dash(
@@ -25,35 +26,10 @@ icon_map = {
 	"/group_dashboard": "fas fa-chart-column",
 }
 
-
-def sidebar_layout():
-	return html.Div(
-		[
-			html.Div("MENU", className="sidebar-label"),
-			html.Div(
-				[
-					dcc.Link(
-						html.Button(
-							html.I(className=icon_map.get(page["relative_path"], "fas fa-file")),
-							title="",
-							className="icon-btn",
-						),
-						href=page["relative_path"],
-						className="nav-link-wrapper",
-					)
-					for page in dash.page_registry.values()
-				],
-				className="tab-buttons",
-			),
-		],
-		id="sidebar",
-	)
-
-
 app.layout = html.Div(
 	[
 		dcc.Location(id="url", refresh=False),
-		sidebar_layout(),
+		generate_sidebar(icon_map, dash.page_registry),
 		html.Div(
 			[
 				dbc.Container(

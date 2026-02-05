@@ -391,6 +391,29 @@ def generate_download_block() -> dbc.Modal:
 
 	return modal
 
+def generate_sidebar(icon_map, page_registry):
+	return html.Div(
+		[
+			html.Div("MENU", className="sidebar-label"),
+			html.Div(
+				[
+					dcc.Link(
+						html.Button(
+							html.I(className=icon_map.get(page["relative_path"], "fas fa-file")),
+							title="",
+							className="icon-btn",
+						),
+						href=page["relative_path"],
+						className="nav-link-wrapper",
+					)
+					for page in page_registry.values()
+				],
+				className="tab-buttons",
+			),
+		],
+		id="sidebar",
+	)
+
 
 def generate_standard_graph(graph_id: str, css_class: str = "plot-450") -> html.Div:
 	"""Generate Div that contains graph and corresponding data"""
