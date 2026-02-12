@@ -58,7 +58,7 @@ def calculate_cage_occupancy(
 		.drop("datetime")
 	)
 
-	full_group_list = time_lf.join(auxfun.get_animal_cage_grid(cfg), how="cross")
+	full_group_list = time_lf.join(auxfun.get_animal_position_grid(cfg, "cages"), how="cross")
 
 	agg = (
 		binary_lf.with_columns(auxfun.get_hour(), auxfun.get_day())

@@ -296,7 +296,7 @@ def get_animal_position_grid(cfg: dict, position_key: Literal['cages', 'position
 	"""Auxfun to prepare LazyFrame of all animal x cage combos"""
 	return pl.LazyFrame(
 		product(cfg["animal_ids"], cfg[position_key]),
-		schema={"animal_id": pl.Enum(cfg["animal_ids"]), "cage": pl.Categorical},
+		schema={"animal_id": pl.Enum(cfg["animal_ids"]), position_key[:-1]: pl.Categorical}, #stupid way to remove last letter 
 	)
 
 
