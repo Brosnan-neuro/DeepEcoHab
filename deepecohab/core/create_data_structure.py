@@ -205,9 +205,9 @@ def create_padded_df(
 		.with_columns(pl.coalesce([pl.col("datetime"), pl.col("phase_end")]).alias("datetime"))
 		.sort(["animal_id", "datetime"])
 		.with_columns(pl.col("position").fill_null(strategy="backward").over("animal_id"))
-	)
-	full_lf = full_lf.with_columns(
-		(pl.col("phase") != pl.col("phase").shift(-1).over("animal_id")).alias("mask")
+		.with_columns(
+			(pl.col("phase") != pl.col("phase").shift(-1).over("animal_id")).alias("mask")
+		)
 	)
 
 	extension_lf = full_lf.filter(

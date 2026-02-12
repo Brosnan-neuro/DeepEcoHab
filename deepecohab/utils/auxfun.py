@@ -95,7 +95,7 @@ def make_project_path(project_location: str, experiment_name: str) -> Path:
 
 def get_phase_lens(cfg: dict[str, Any]) -> tuple[int, int]:
 	"""Helper to extract default phase duration in seconds"""
-	SECONDS_PER_DAY: Literal[86400] = 24 * 3600
+	SECONDS_PER_DAY = 86400
 
 	start_time, end_time = cfg["phase"].values()
 
