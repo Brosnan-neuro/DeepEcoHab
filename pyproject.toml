@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires      = [ "setuptools>=61.0" ]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,12 +9,18 @@ description = "EcoHab with some machine learning"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = [ "LICENSE" ]
 authors = [
-    {name = "Konrad Danielewski", email = "k.danielewski@nencki.edu.pl"},
-    {name = "Ula Włodkowska", email = "u.wlodkowska@nencki.edu.pl"},
+    { name = "Konrad Danielewski", email = "k.danielewski@nencki.edu.pl" },
+    { name = "Ula Włodkowska", email = "u.wlodkowska@nencki.edu.pl" },
 ]
-keywords = ["neuroscience", "ecology", "dash", "data-visualization", "data-analysis"]
+keywords = [
+    "neuroscience",
+    "ecology",
+    "dash",
+    "data-visualization",
+    "data-analysis",
+]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
@@ -39,38 +45,26 @@ dependencies = [
     "tzlocal",
 ]
 
-[project.urls]
-Homepage = "https://github.com/KonradDanielewski/DeepEcoHab"
-Issues = "https://github.com/KonradDanielewski/DeepEcoHab/issues"
+    [project.urls]
+    Homepage = "https://github.com/KonradDanielewski/DeepEcoHab"
+    Issues   = "https://github.com/KonradDanielewski/DeepEcoHab/issues"
 
 [tool.setuptools]
 include-package-data = true
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["deepecohab*"]
-namespaces = true
+    [tool.setuptools.packages.find]
+    where      = [ "." ]
+    include    = [ "deepecohab*" ]
+    namespaces = true
 
-[tool.setuptools.package-data]
-"deepecohab.dash.assets" = ["style.css"]
-
-[tool.ty.rules]
-unused-ignore-comment = "warn"
-redundant-cast = "ignore"
-possibly-missing-attribute = "error"
-possibly-missing-import = "error"
+    [tool.setuptools.package-data]
+    "deepecohab.dash.assets" = [ "style.css" ]
 
 [tool.ruff]
 line-length = 100
 
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "tab"
+    [tool.ruff.format]
+    quote-style  = "double"
+    indent-style = "tab"
 
-docstring-code-format = true
-
-[dependency-groups]
-dev = [
-    "ty>=0.0.16",
-]
-
+    docstring-code-format = true
