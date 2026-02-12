@@ -29,6 +29,7 @@ def generate_settings_block(
 	comparison_layout: bool = False,
 ) -> html.Div:
 	"""Generates settings block for the dashboard tabs"""
+
 	block = html.Div(
 		[
 			html.Div(
@@ -86,6 +87,7 @@ def generate_settings_block(
 								vertical=False,
 								persistence=True,
 								persistence_type="session",
+								allow_direct_input=False,
 								className="dash-slider",
 							),
 						],
@@ -390,6 +392,7 @@ def generate_download_block() -> dbc.Modal:
 	)
 
 	return modal
+
 
 def generate_sidebar(icon_map: dict[str, str], page_registry: dict[str, str]):
 	return html.Div(

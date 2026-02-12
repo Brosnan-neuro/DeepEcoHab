@@ -225,10 +225,6 @@ def generate_layout():
 																dbc.Checklist(
 																	options=[
 																		{
-																			"label": " Custom layout",
-																			"value": "custom",
-																		},
-																		{
 																			"label": " Field layout",
 																			"value": "field",
 																		},
@@ -294,7 +290,12 @@ def generate_layout():
 					html.Div(
 						id="toast-container",
 						className="position-fixed top-0 end-0 p-3 txt",
-						style={"zIndex": 1050},
+						style={
+							"zIndex": 1050,
+							"width": "300px",
+							"fontSize": "1.2rem",
+							"marginBottom": "20px",
+						},
 					),
 				],
 				xs=12,

@@ -24,7 +24,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "dash",
+    "dash[diskcache]",
     "dash-bootstrap-components",
     "ipykernel",
     "kaleido",

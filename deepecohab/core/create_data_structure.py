@@ -414,11 +414,6 @@ def get_ecohab_data_structure(
 	)
 	auxfun.add_positions_to_config(config_path, positions)
 
-	positions = (
-		auxfun.remove_tunnel_directionality(lf, cfg).collect()["position"].unique().to_list()
-	)
-	auxfun.add_positions_to_config(config_path, positions)
-
 	if save_data:
 		lf.sink_parquet(results_path / f"{key}.parquet", compression="lz4", engine="streaming")
 		phase_durations_lf.sink_parquet(

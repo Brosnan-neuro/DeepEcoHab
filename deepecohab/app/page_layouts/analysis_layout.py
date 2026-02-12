@@ -42,6 +42,7 @@ def generate_cohort_card():
 										count=1,
 										value=[0.1, 1.2],
 										marks={i: str(i) for i in [0, 5]},
+										allow_direct_input=False,
 										tooltip={
 											"placement": "bottom",
 											"always_visible": False,
@@ -50,7 +51,7 @@ def generate_cohort_card():
 												"fontSize": "12px",
 											},
 										},
-										className="dash-slider",
+										className="rc-slider",
 									),
 								],
 								width=6,

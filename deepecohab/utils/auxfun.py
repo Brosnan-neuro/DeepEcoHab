@@ -432,7 +432,6 @@ def remove_tunnel_directionality(lf: pl.LazyFrame, cfg: dict[str, Any]) -> pl.La
 		.cast(pl.Utf8)
 		.replace(cfg["tunnels"])
 		.cast(pl.Categorical)
-		.alias("position")
 	)
 
 

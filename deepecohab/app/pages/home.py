@@ -69,19 +69,6 @@ def toggle_opt(n, is_open):
 
 
 @callback(
-	Output("layout-checks", "value"), Input("layout-checks", "value"), prevent_initial_call=True
-)
-def sync_checks(selected):
-	if not selected:
-		return no_update
-
-	if "field" in selected and "custom" not in selected:
-		return selected + ["custom"]
-
-	return no_update
-
-
-@callback(
 	[
 		Output("create-project-btn", "disabled"),
 		Output({"type": "required-input", "index": ALL}, "valid"),

@@ -17,8 +17,6 @@ app = dash.Dash(
 	],
 )
 
-server = app.server
-
 icon_map = {
 	"/": "fas fa-house",
 	"/analysis": "fas fa-magnifying-glass-chart",
