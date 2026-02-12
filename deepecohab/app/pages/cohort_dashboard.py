@@ -79,7 +79,7 @@ def render_graphs_layout(cfg):
 	State("project-config-store", "data"),
 )
 def update_plots(
-	days_range: list[int, int],
+	days_range: list[int],
 	phase_type: str,
 	agg_switch: str,
 	pos_switch: str,
@@ -219,7 +219,7 @@ def download_selected_data(
 	selected_dfs: list[pl.DataFrame],
 	selected_plots: list[str],
 	phase_type: str,
-	days_range: list[int, int],
+	days_range: list[int],
 	all_figures: list[dict],
 	all_ids: list[dict],
 	all_stores: list[dict],

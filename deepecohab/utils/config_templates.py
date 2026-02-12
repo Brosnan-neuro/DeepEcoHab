@@ -10,13 +10,13 @@ class ExperimentConfig(ABC):
 	animal_ids: list[str]
 	dark_phase_start: str
 	light_phase_start: str
-	days_range: list[int, int] | None = None
-	start_datetime: str = None
-	finish_datetime: str = None
+	days_range: list[int] | None = None
+	start_datetime: str | None = None
+	finish_datetime: str | None = None
 	antenna_combinations: dict[str, str] = field(default_factory=dict)
 	tunnels: dict[str, str] = field(default_factory=dict)
 	phase: dict[str, str] = field(init=False)
-	experiment_timeline: dict[str, str] = field(init=False)
+	experiment_timeline: dict[str, str | None] = field(init=False)
 	"""Generates a config template
 
     Attributes:
@@ -52,10 +52,10 @@ class ExperimentConfig(ABC):
 		data["days_range"] = self.days_range
 		data["antenna_combinations"] = self.antenna_combinations
 		data["tunnels"] = self.tunnels
-		try:
-			data["antenna_rename_scheme"] = self.antenna_rename_scheme
-		except AttributeError:
-			pass
+  
+		scheme = getattr(self, "antenna_rename_scheme", None)
+		if scheme is not None:
+			data["antenna_rename_scheme"] = scheme
 		return data
 
 
@@ -123,7 +123,7 @@ class DefaultConfig(ExperimentConfig):
 class CustomConfig(DefaultConfig):
 	"""Generates custom config for arbitrary"""
 
-	antenna_rename_scheme: dict[str, dict[str, str]] = field(default_factory=dict)
+	antenna_rename_scheme: dict[str, dict[str, int]] = field(default_factory=dict)
 
 	def __post_init__(self):
 		super().__post_init__()
@@ -242,28 +242,28 @@ class FieldConfig(CustomConfig):
 			"cA_cH": "tunnel8",
 		}
 		self.antenna_rename_scheme = {
-				"COM1": {
-					"1": 1,
-					"2": 2,
-					"3": 3,
-					"4": 4,
-				},
-				"COM2": {
-					"1": 5,
-					"2": 6,
-					"3": 7,
-					"4": 8,
-				},
-				"COM3": {
-					"1": 9,
-					"2": 10,
-					"3": 11,
-					"4": 12,
-				},
-				"COM4": {
-					"1": 13,
-					"2": 14,
-					"3": 15,
-					"4": 16,
-				},
+			"COM1": {
+				"1": 1,
+				"2": 2,
+				"3": 3,
+				"4": 4,
+			},
+			"COM2": {
+				"1": 5,
+				"2": 6,
+				"3": 7,
+				"4": 8,
+			},
+			"COM3": {
+				"1": 9,
+				"2": 10,
+				"3": 11,
+				"4": 12,
+			},
+			"COM4": {
+				"1": 13,
+				"2": 14,
+				"3": 15,
+				"4": 16,
+			},
 		}

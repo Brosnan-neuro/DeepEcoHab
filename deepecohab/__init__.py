@@ -21,7 +21,6 @@ from deepecohab.utils.auxfun import (
 	df_registry as df_registry,
 	load_ecohab_data as load_ecohab_data,
 	read_config as read_config,
-	run_dashboard as run_dashboard,
 )
 from deepecohab.utils.auxfun_plots import set_default_theme as set_default_theme
 from deepecohab.version import __version__ as __version__

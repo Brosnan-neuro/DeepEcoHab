@@ -54,6 +54,12 @@ namespaces = true
 [tool.setuptools.package-data]
 "deepecohab.dash.assets" = ["style.css"]
 
+[tool.ty.rules]
+unused-ignore-comment = "warn"
+redundant-cast = "ignore"
+possibly-missing-attribute = "error"
+possibly-missing-import = "error"
+
 [tool.ruff]
 line-length = 100
 
@@ -62,4 +68,9 @@ quote-style = "double"
 indent-style = "tab"
 
 docstring-code-format = true
+
+[dependency-groups]
+dev = [
+    "ty>=0.0.16",
+]
 

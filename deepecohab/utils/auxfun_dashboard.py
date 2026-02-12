@@ -20,7 +20,7 @@ def generate_settings_block(
 	phase_type_id: dict | str,
 	aggregate_stats_id: dict | str,
 	slider_id: dict | str,
-	days_range: list[int, int],
+	days_range: list[int],
 	position_switch_id: dict | str | None = None,
 	pairwise_switch_id: dict | str | None = None,
 	sociability_switch_id: dict | str | None = None,
@@ -245,7 +245,7 @@ def generate_settings_block(
 	return block
 
 
-def generate_comparison_block(side: str, days_range: list[int, int]) -> html.Div:
+def generate_comparison_block(side: str, days_range: list[int]) -> html.Div:
 	""" "Generates a side of a comparisons block"""
 	return html.Div(
 		[
@@ -531,14 +531,14 @@ def download_plots(
 
 def build_filter_expr(
 	columns: list[str],
-	days_range: list[int, int] = None,
+	days_range: list[int] = None,
 	phase_type: list[str] = None,
 ) -> pl.Expr:
 	"Builds filtering expressions for DF download by checking column presence"
 	exprs: list[pl.Expr] = []
 
 	if days_range is not None and "day" in columns:
-		exprs.append(pl.col("day").is_between(*days_range))
+		exprs.append(pl.col("day").is_between(*days_range, closed='both'))
 
 	if phase_type is not None and "phase" in columns:
 		exprs.append(pl.col("phase").is_in(phase_type))
@@ -549,7 +549,7 @@ def build_filter_expr(
 def download_dataframes(
 	selected_dfs: list[pl.DataFrame],
 	phase_type: list[str],
-	days_range: list[int, int],
+	days_range: list[int],
 	store: dict,
 ) -> dict[str, Any | None]:
 	"""Downloads the selected DataFrame/s via the browser"""

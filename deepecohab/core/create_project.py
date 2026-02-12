@@ -34,7 +34,7 @@ def create_ecohab_project(
 	if not any(data_dir.glob("*.txt")):
 		raise FileNotFoundError(f"No .txt files found in {data_dir}")
 
-	days_range: list[int, int] = None
+	days_range: list[int] = None
 	if start_datetime and finish_datetime:
 		dt_format = "%Y-%m-%d %H:%M:%S"
 		start = dt.datetime.strptime(start_datetime, dt_format)

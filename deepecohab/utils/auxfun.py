@@ -1,7 +1,4 @@
 import datetime as dt
-import importlib
-import subprocess
-import sys
 from itertools import product
 from pathlib import Path
 from typing import (
@@ -120,7 +117,7 @@ def _split_datetime(phase_start: str) -> dt.datetime:
 def get_phase_offset(time_str: str) -> pl.Expr:
 	"Helper to return offset from midnight for given hh:mm:ss string"
 	start: dt.datetime = _split_datetime(time_str)
-	offset: pl.Expr  = pl.duration(
+	offset: pl.Expr = pl.duration(
 		hours=24 if start.hour == 0 else start.hour,
 		minutes=start.minute,
 		seconds=start.second,
@@ -292,11 +289,16 @@ def get_phase_count(lf: pl.LazyFrame) -> pl.LazyFrame:
 	return lf
 
 
-def get_animal_position_grid(cfg: dict, position_key: Literal['cages', 'positions']) -> pl.LazyFrame:
+def get_animal_position_grid(
+	cfg: dict, position_key: Literal["cages", "positions"]
+) -> pl.LazyFrame:
 	"""Auxfun to prepare LazyFrame of all animal x cage combos"""
 	return pl.LazyFrame(
 		product(cfg["animal_ids"], cfg[position_key]),
-		schema={"animal_id": pl.Enum(cfg["animal_ids"]), position_key[:-1]: pl.Categorical}, #stupid way to remove last letter 
+		schema={
+			"animal_id": pl.Enum(cfg["animal_ids"]),
+			position_key[:-1]: pl.Categorical,
+		},  # stupid way to remove last letter
 	)
 
 
@@ -388,9 +390,11 @@ def add_cages_to_config(config_path: str | Path) -> None:
 		toml.dump(cfg, config)
 
 
-def add_positions_to_config(config_path: str | Path, positions: list[str]) -> None:
+def add_positions_to_config(config_path: str | Path) -> None:
 	"""Auxfun to add cage names to config for reading convenience"""
 	cfg: dict[str, Any] = read_config(config_path)
+
+	positions = {cfg["tunnels"].get(value, value) for value in cfg["antenna_combinations"].values()} | {'undefined'}
 
 	with open(config_path, "w") as config:
 		cfg["positions"] = sorted(positions)
@@ -428,40 +432,5 @@ def get_time_spent_expression(
 def remove_tunnel_directionality(lf: pl.LazyFrame, cfg: dict[str, Any]) -> pl.LazyFrame:
 	"""Auxfun to map directional tunnels in a LazyFrame to undirected ones"""
 	return lf.with_columns(
-		pl.col("position")
-		.cast(pl.Utf8)
-		.replace(cfg["tunnels"])
-		.cast(pl.Categorical)
+		pl.col("position").cast(pl.Utf8).replace(cfg["tunnels"]).cast(pl.Categorical)
 	)
-
-
-def run_dashboard(config_path: str | Path | dict[str, Any]):
-	"""Auxfun to open dashboard for experiment from provided config"""
-	cfg: dict[str, Any] = read_config(config_path)
-
-	project_loc = Path(cfg["project_location"])
-	data_path = project_loc / "results"
-	cfg_path = project_loc / "config.toml"
-
-	path_to_dashboard: str = importlib.util.find_spec("deepecohab.dash.dashboard").origin
-
-	cmd: list[str] = [
-		sys.executable,
-		path_to_dashboard,
-		"--results-path",
-		str(data_path),
-		"--config-path",
-		str(cfg_path),
-	]
-
-	process = subprocess.Popen(
-		cmd,
-		stdout=subprocess.PIPE,
-		stderr=subprocess.STDOUT,
-		text=True,
-	)
-	try:
-		output, _ = process.communicate(timeout=1)
-		print(output)
-	except subprocess.TimeoutExpired:
-		pass

@@ -4,7 +4,7 @@ from dash import dcc, html
 from deepecohab.utils import auxfun_dashboard
 
 
-def generate_graphs_layout(days_range: list[int, int]) -> html.Div:
+def generate_graphs_layout(days_range: list[int]) -> html.Div:
 	"""Generates layout of the main dashboard tab"""
 	return html.Div(
 		[
