@@ -8,6 +8,7 @@ def generate_graphs_layout(days_range: list[int]) -> html.Div:
 	"""Generates layout of the main dashboard tab"""
 	return html.Div(
 		[
+			html.Div(
 			auxfun_dashboard.generate_settings_block(
 				phase_type_id="phase_type",
 				aggregate_stats_id="agg_switch",
@@ -18,6 +19,8 @@ def generate_graphs_layout(days_range: list[int]) -> html.Div:
 				sociability_switch_id="sociability_switch",
 				days_range=days_range,
 				include_download=True,
+			),
+			className="sticky-settings-block",
 			),
 			dbc.Container(
 				[

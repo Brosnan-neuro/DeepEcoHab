@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import diskcache
-import polars as pl
 from dash import DiskcacheManager
 
 from deepecohab.utils import auxfun
@@ -10,6 +9,7 @@ cache_dir = Path(r"\cache")
 cache_dir.mkdir(exist_ok=True)
 
 launch_cache = diskcache.Cache(cache_dir)
+launch_cache.clear()
 background_manager = DiskcacheManager(launch_cache)
 
 def get_project_data(config: dict):

@@ -59,9 +59,9 @@ def create_ecohab_project(
 		"days_range": days_range,
 	}
 
-	if custom_layout:
+	if custom_layout and not field_ecohab:
 		if not isinstance(antenna_rename_scheme, dict):
-			raise ValueError("Custom or field layout requires an antenna_rename_scheme dict.")
+			raise ValueError("Custom layout requires an antenna_rename_scheme dict.")
 
 		config_kwargs["antenna_rename_scheme"] = antenna_rename_scheme
 		config_cls = config_templates.CustomConfig

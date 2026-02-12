@@ -152,8 +152,11 @@ def _create_project(
 		return no_update
 
 	id_list = [i.strip() for i in animals.split(",")] if animals else None
-	is_custom = "custom" in layouts
 	is_field = "field" in layouts
+	if "field" in layouts:
+		is_custom = True
+	else:
+		is_custom = "custom" in layouts
 
 	project_location = Path(loc)
 	if not project_location.is_dir():
