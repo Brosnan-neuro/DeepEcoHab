@@ -233,28 +233,20 @@ p,
   box-shadow: 0 0 5px rgba(79, 195, 247, 0.3);
 }
 
-#position_switch.dash-radio {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-}
-
-#pairwise_switch.dash-radio {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-}
-
-#ranking_switch.dash-radio {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-}
-
+#position_switch.dash-radio,
+#pairwise_switch.dash-radio,
+#ranking_switch.dash-radio,
 #sociability_switch.dash-radio {
   flex-direction: row;
   align-items: center;
   gap: 8px;
+}
+
+#position_switch.dash-options-list,
+#pairwise_switch.dash-options-list,
+#ranking_switch.dash-options-list,
+#sociability_switch.dash-options-list {
+  background-color: #161f34;
 }
 
 /* ===== Dash 4 (Radix) RangeSlider ===== */
@@ -340,9 +332,9 @@ p,
   outline: none;
 }
 
-.dash-dropdown .dash-options-list {
-  color: #1f2c44 !important;
-  background-color: #1f2c44 !important;
+.dash-options-list {
+  color: #1f2c44;
+  background-color: #1f2c44;
 }
 
 .dash-options-list-option {

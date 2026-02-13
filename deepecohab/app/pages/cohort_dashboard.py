@@ -125,6 +125,8 @@ def update_plots(
 		Output({"figure": "comparison-plot", "side": MATCH}, "figure"),
 		Output({"container": "position_switch", "side": MATCH}, "hidden"),
 		Output({"container": "pairwise_switch", "side": MATCH}, "hidden"),
+		Output({"container": "sociability_switch", "side": MATCH}, "hidden"),
+		Output({"container": "ranking_switch", "side": MATCH}, "hidden"),
 	],
 	Input({"type": ALL, "side": MATCH}, "value"),
 	State("project-config-store", "data"),
@@ -169,11 +171,15 @@ def update_comparison_plot(switches: list[Any], cfg: dict[str, Any]) -> tuple[go
 
 	pairwise_hidden = "pairwise_switch" not in plot_attributes
 	position_hidden = "position_switch" not in plot_attributes
+	sociability_hidden = "sociability_switch" not in plot_attributes
+	ranking_hidden = "ranking_switch" not in plot_attributes
 
 	return (
 		fig,
 		position_hidden,
 		pairwise_hidden,
+		sociability_hidden,
+		ranking_hidden,
 	)
 
 

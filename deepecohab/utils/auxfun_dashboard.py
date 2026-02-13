@@ -135,10 +135,7 @@ def generate_settings_block(
 												{"label": "Time", "value": "time"},
 											],
 											value="visits",
-											labelStyle={
-												"display": "block",
-												"marginBottom": "5px",
-											},
+											className="dash-radio"
 										),
 									),
 								],
@@ -160,10 +157,7 @@ def generate_settings_block(
 												{"label": "Time", "value": "time_together"},
 											],
 											value="pairwise_encounters",
-											labelStyle={
-												"display": "block",
-												"marginBottom": "5px",
-											},
+											className="dash-radio"
 										),
 									),
 								],
@@ -191,10 +185,7 @@ def generate_settings_block(
 												},
 											],
 											value="proportion_together",
-											labelStyle={
-												"display": "block",
-												"marginBottom": "5px",
-											},
+											className="dash-radio"
 										),
 									),
 								],
@@ -216,10 +207,7 @@ def generate_settings_block(
 												{"label": "Day stability", "value": "stability"},
 											],
 											value="intime",
-											labelStyle={
-												"display": "block",
-												"marginBottom": "5px",
-											},
+											className="dash-radio"
 										),
 									),
 								],
