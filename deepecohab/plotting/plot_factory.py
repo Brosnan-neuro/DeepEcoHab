@@ -51,6 +51,7 @@ def plot_activity(
 			)
 			fig.update_traces(boxmean=True)
 
+	fig.update_layout(legend=dict(title="<b>Position</b>"))
 	fig.update_xaxes(title_text="<b>Animal ID</b>")
 	fig.update_yaxes(title_text=position_y_title)
 
@@ -106,12 +107,14 @@ def plot_sum_line_per_hour(
 	match input_type:
 		case "activity":
 			title = "<b>Activity over time</b>"
-			y_axes_label = "Antenna detections"
+			y_axes_label = "<b>Antenna detections</b>"
 			color_col = "animal_id"
+			legend_title = "<b>Animal ID</b>"
 		case "chasings":
 			title = "<b>Chasing over time</b>"
-			y_axes_label = "# of chasing events"
+			y_axes_label = "<b># of chasing events</b>"
 			color_col = "chaser"
+			legend_title = "<b>Chaser</b>"
 
 	fig = px.line(
 		df,
@@ -123,6 +126,8 @@ def plot_sum_line_per_hour(
 		line_shape="spline",
 		title=title,
 	)
+
+	fig.update_layout(legend=dict(title=legend_title))
 	fig.update_yaxes(title=y_axes_label)
 	fig.update_xaxes(title="<b>Hours</b>", range=[0, 23])
 
@@ -140,11 +145,11 @@ def plot_mean_line_per_hour(
 	match input_type:
 		case "activity":
 			title = "<b>Activity over time</b>"
-			y_axes_label = "Antenna detections"
+			y_axes_label = "<b>Antenna detections</b>"
 			animal_col = "animal_id"
 		case "chasings":
 			title = "<b>Chasing over time</b>"
-			y_axes_label = "# of chasing events"
+			y_axes_label = "<b># of chasing events</b>"
 			animal_col = "chaser"
 
 	fig = go.Figure()
@@ -188,7 +193,7 @@ def plot_mean_line_per_hour(
 	fig.update_layout(
 		title=title,
 		legend=dict(
-			title="animal_id",
+			title="<b>Animal IDs</b>",
 			tracegroupgap=0,
 		),
 	)
@@ -215,12 +220,12 @@ def plot_ranking_line(
 	fig.update_layout(
 		title="<b>Social dominance ranking in time</b>",
 		legend=dict(
-			title="animal_id",
+			title="<b>Animal IDs</b>",
 			tracegroupgap=0,
 		),
-		xaxis=dict(title="Timeline"),
+		xaxis=dict(title="<b>Timeline</b>"),
 		yaxis=dict(
-			title="Ranking",
+			title="<b>Ranking</b>",
 		),
 	)
 
@@ -246,13 +251,13 @@ def plot_ranking_distribution(
 	fig.update_layout(
 		title="<b>Ranking probability distribution</b>",
 		xaxis=dict(
-			title="Ranking",
+			title="<b>Ranking</b>",
 		),
 		yaxis=dict(
-			title="Probability density",
+			title="<b>Probability density</b>",
 		),
 		legend=dict(
-			title="animal_id",
+			title="<b>Animal IDs</b>",
 			tracegroupgap=0,
 		),
 	)
@@ -278,14 +283,14 @@ def plot_ranking_stability(
 
 	fig.update_layout(
 		title_x=0.5,
-		legend_title_text="Animal ID",
+		legend_title_text="<b>Animal IDs</b>",
 		yaxis=dict(
-			title="Rank",
+			title="<b>Rank</b>",
 			autorange="reversed",
 			type="category",
 		),
 		xaxis=dict(
-			title="Day",
+			title="<b>Day</b>",
 		),
 	)
 
@@ -306,7 +311,7 @@ def time_spent_per_cage(
 	)
 
 	for annotation in fig.layout.annotations:
-		annotation["text"] = f"Cage {int(annotation['text'].split('=')[1]) + 1}"
+		annotation["text"] = f"<b>Cage {int(annotation['text'].split('=')[1]) + 1}</b>"
 
 	fig.update_traces(
 		hovertemplate="<br>".join(
@@ -359,10 +364,10 @@ def plot_sociability_heatmap(
 	match type_switch:
 		case "pairwise_encounters":
 			pairwise_title = "<b>Number of pairwise encounters</b>"
-			pairwise_z_label = "Number: %{z}"
+			pairwise_z_label = "<b>Number: %{z}</b>"
 		case "time_together":
 			pairwise_title = "<b>Time spent together</b>"
-			pairwise_z_label = "Time [s]: %{z}"
+			pairwise_z_label = "<b>Time [s]: %{z}</b>"
 
 	fig = px.imshow(
 		img,
@@ -376,7 +381,7 @@ def plot_sociability_heatmap(
 	)
 
 	for annotation in fig.layout.annotations:
-		annotation["text"] = f"Cage {int(annotation['text'].split('=')[1]) + 1}"
+		annotation["text"] = f"<b>Cage {int(annotation['text'].split('=')[1]) + 1}</b>"
 
 	fig.update_traces(
 		hovertemplate="<br>".join(
@@ -402,7 +407,7 @@ def plot_within_cohort_heatmap(
 			title = "<b>Proportional time spent together</b>"
 		case "sociability":
 			title = "<b>Within-cohort sociability</b>"
-   
+
 	fig = px.imshow(
 		img,
 		zmin=0,
@@ -444,7 +449,7 @@ def plot_metrics_polar(
 	)
 
 	fig.update_polars(bgcolor="rgba(0,0,0,0)")
-	fig.update_layout(title_y=0.95, title_x=0.45)
+	fig.update_layout(title_y=0.95, legend_title_text="<b>Animal IDs</b>", title_x=0.45)
 
 	return fig
 
@@ -524,12 +529,8 @@ def plot_social_stability(
 	)
 
 	fig.update_layout(
-		xaxis=dict(
-			title="Relationship stability",
-		),
-		yaxis=dict(
-			title="Median proportion together",
-		),
+		xaxis=dict(title="<b>Relationship stability</b>"),
+		yaxis=dict(title="<b>Median proportion together</b>"),
 	)
 	fig.update_traces(marker_size=12)
 
