@@ -10,7 +10,7 @@ def generate_graphs_layout(days_range: list[int]) -> html.Div:
 		[
 			html.Div(
 				auxfun_dashboard.generate_settings_block(
-					phase_type_idf="phase_type",
+					phase_type_id="phase_type",
 					aggregate_stats_id="agg_switch",
 					slider_id="days_range",
 					position_switch_id="position_switch",

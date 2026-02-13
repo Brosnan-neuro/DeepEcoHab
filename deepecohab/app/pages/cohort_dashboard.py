@@ -208,7 +208,6 @@ def toggle_modal(
 		State("days_range", "value"),
 		State({"type": "graph", "name": ALL}, "figure"),
 		State({"type": "graph", "name": ALL}, "id"),
-		State({"type": "store", "name": ALL}, "data"),
 		State("project-config-store", "data"),
 	],
 	prevent_initial_call=True,
@@ -221,7 +220,6 @@ def download_selected_data(
 	days_range: list[int],
 	all_figures: list[dict],
 	all_ids: list[dict],
-	all_stores: list[dict],
 	cfg: dict[str, Any],
 ) -> dict[str, Any | None]:
 	"""Triggers download from the Downloads modal component"""
@@ -238,7 +236,6 @@ def download_selected_data(
 			triggered["fmt"],
 			all_figures,
 			all_ids,
-			all_stores,
 		)
 	else:
 		raise dash.exceptions.PreventUpdate
@@ -255,7 +252,7 @@ def download_selected_data(
 	prevent_initial_call=True,
 )
 def download_comparison_data(
-	btn_click: int, figure: dict, data_store: dict, plot_type: str
+	btn_click: int, figure: dict, plot_type: str
 ) -> dict[str, Any | None]:
 	"""Triggers download from the comparisons tab"""
 	triggered = ctx.triggered_id
@@ -263,9 +260,9 @@ def download_comparison_data(
 		raise dash.exceptions.PreventUpdate
 
 	figure = go.Figure(figure)
-	if (figure is None) or (data_store is None):
+	if (figure is None):
 		raise dash.exceptions.PreventUpdate
 
 	plot_name = f"comparison_{plot_type}"
-	fname, content = auxfun_dashboard.get_plot_file(data_store, figure, triggered["fmt"], plot_name)
+	fname, content = auxfun_dashboard.get_plot_file(figure, triggered["fmt"], plot_name)
 	return dcc.send_bytes(lambda b: b.write(content), filename=fname)

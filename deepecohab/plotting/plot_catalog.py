@@ -330,7 +330,7 @@ def within_cohort_sociability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]
 		cfg.store, cfg.phase_type, cfg.animals, cfg.days_range, cfg.sociability_switch
 	)
 
-	return plot_factory.plot_within_cohort_heatmap(img, cfg.animals)
+	return plot_factory.plot_within_cohort_heatmap(img, cfg.animals, cfg.sociability_switch)
 
 
 @plot_registry.register(

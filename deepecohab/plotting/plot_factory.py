@@ -392,16 +392,24 @@ def plot_sociability_heatmap(
 
 
 def plot_within_cohort_heatmap(
-	img: np.ndarray, animals: list[str]
+	img: np.ndarray,
+	animals: list[str],
+	sociability_switch: Literal["proportion_together", "sociability"],
 ) -> tuple[go.Figure, pl.DataFrame]:
 	"""Plots heatmap for within-cohort sociability."""
+	match sociability_switch:
+		case "proportion_together":
+			title = "<b>Proportional time spent together</b>"
+		case "sociability":
+			title = "<b>Within-cohort sociability</b>"
+   
 	fig = px.imshow(
 		img,
 		zmin=0,
 		x=animals,
 		y=animals,
 		color_continuous_scale="Viridis",
-		title="<b>Within-cohort sociability</b>",
+		title=title,
 	)
 
 	fig.update_traces(
@@ -432,7 +440,7 @@ def plot_metrics_polar(
 		line_shape="spline",
 		color_discrete_map={animal: color for animal, color in zip(animals, colors)},
 		range_r=[df["value"].min() - 0.5, df["value"].max() + 0.5],
-		title="<b>Social dominance metrics</b>",
+		title="<b>Animal feature overview</b>",
 	)
 
 	fig.update_polars(bgcolor="rgba(0,0,0,0)")

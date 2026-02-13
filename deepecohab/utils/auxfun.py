@@ -127,7 +127,11 @@ def get_phase_lens(cfg: dict[str, Any]) -> tuple[int, int]:
 
 def _split_datetime(phase_start: str) -> dt.datetime:
 	"""Auxfun to split datetime string."""
-	return dt.datetime.strptime(phase_start, "%H:%M:%S")
+	try:
+		return dt.datetime.strptime(phase_start, "%H:%M:%S")
+	except ValueError:
+		return dt.datetime.strptime(phase_start, "%H:%M")
+
 
 
 def get_phase_offset(time_str: str) -> pl.Expr:
