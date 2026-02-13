@@ -38,28 +38,27 @@ def update_analysis_page(config):
 	prevent_initial_call=True,
 )
 def start_analysis(n_clicks, config, min_time, chasing_window):
-    if not n_clicks or not config:
-        return no_update, no_update
+	if not n_clicks or not config:
+		return no_update, no_update
 
-    pipeline_generator = auxfun.df_registry.run_pipeline(
-        config, 
-        minimum_time=min_time,
-        chasing_time_window=chasing_window,
-    )
+	pipeline_generator = auxfun.df_registry.run_pipeline(
+		config,
+		minimum_time=min_time,
+		chasing_time_window=chasing_window,
+	)
 
-    for step_name, current, total in pipeline_generator:
-        percent = int((current / total) * 100)
-        
-        cache_config.launch_cache.set(
-            "analysis_status", 
-            {"percent": percent, "msg": f"Running {step_name}..."}
-        )
+	for step_name, current, total in pipeline_generator:
+		percent = int((current / total) * 100)
 
-    cache_config.launch_cache.set("analysis_status", {"percent": 100, "msg": "Analysis Complete"})
-    time.sleep(0.5)
-    cache_config.get_project_data(config)
-    
-    return True, True
+		cache_config.launch_cache.set(
+			"analysis_status", {"percent": percent, "msg": f"Running {step_name}..."}
+		)
+
+	cache_config.launch_cache.set("analysis_status", {"percent": 100, "msg": "Analysis Complete"})
+	time.sleep(0.5)
+	cache_config.get_project_data(config)
+
+	return True, True
 
 
 @callback(

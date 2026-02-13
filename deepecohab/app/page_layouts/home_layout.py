@@ -193,8 +193,9 @@ def generate_layout():
 																				id="sanitize-check",
 																				value=True,
 																				className="checkbox",
-																			)
-																		, align='center'),
+																			),
+																			align="center",
+																		),
 																	],
 																	className="mb-0",
 																),
@@ -219,8 +220,9 @@ def generate_layout():
 																	],
 																	className="mb-0",
 																),
-															], align="center"
-														), 
+															],
+															align="center",
+														),
 													],
 													align="end",
 												),

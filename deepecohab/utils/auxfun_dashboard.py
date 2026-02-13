@@ -27,7 +27,6 @@ def generate_settings_block(
 	comparison_layout: bool = False,
 ) -> html.Div:
 	"""Generates settings block for the dashboard tabs"""
-
 	block = html.Div(
 		[
 			html.Div(
@@ -255,7 +254,6 @@ def generate_comparison_block(side: str, days_range: list[int]) -> html.Div:
 						id={"figure": "comparison-plot", "side": side},
 						config=COMMON_CFG,
 					),
-					dcc.Store(id={"store": "comparison-plot", "side": side}),
 				]
 			),
 			generate_settings_block(
@@ -302,9 +300,7 @@ def generate_plot_download_tab() -> dcc.Tab:
 						width=8,
 					),
 					dbc.Col(
-						get_fmt_download_buttons(
-							"download-btn", ["svg", "png", "json"], "plots"
-						),
+						get_fmt_download_buttons("download-btn", ["svg", "png", "json"], "plots"),
 						width=4,
 						className="d-flex flex-column align-items-start",
 					),
@@ -418,7 +414,6 @@ def generate_standard_graph(graph_id: str, css_class: str = "plot-450") -> html.
 				className=css_class,
 				config=COMMON_CFG,
 			),
-			dcc.Store(id={"type": "store", "name": graph_id}),
 		]
 	)
 
@@ -565,9 +560,3 @@ def download_dataframes(
 	return dcc.send_bytes(
 		lambda b: b.write(zip_buffer.getvalue()), filename="selected_dataframes.zip"
 	)
-
-
-def to_store_json(df: pl.DataFrame | None) -> dict | None:
-	if not isinstance(df, pl.DataFrame):
-		return None
-	return json.dumps(df.to_dict(as_series=False), default=str)

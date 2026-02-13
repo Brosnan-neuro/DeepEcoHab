@@ -76,7 +76,7 @@ plot_registry = PlotRegistry()
 	"ranking-line",
 	dependencies=["store", "animals", "animal_colors", "ranking_switch"],
 )
-def ranking_over_time(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
+def ranking_over_time(cfg: PlotConfig) -> go.Figure:
 	"""Generates ranking plots either over time or as day-to-day stability."""
 
 	match cfg.ranking_switch:
@@ -93,7 +93,7 @@ def ranking_over_time(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	"metrics-polar-line",
 	dependencies=["store", "days_range", "phase_type", "animals", "animal_colors"],
 )
-def polar_metrics(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
+def polar_metrics(cfg: PlotConfig) -> go.Figure:
 	"""Generates a polar (radar) plot comparing various social dominance metrics.
 
 	Visualizes z-scored values for chasing behavior, activity levels, and social
@@ -111,7 +111,7 @@ def polar_metrics(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	"ranking-distribution-line",
 	dependencies=["store", "days_range", "animals", "animal_colors"],
 )
-def ranking_distribution(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
+def ranking_distribution(cfg: PlotConfig) -> go.Figure:
 	"""Generates a line plot of the ranking probability distributions.
 
 	Fits and displays the probability density functions (PDF) for each animal's
@@ -129,7 +129,7 @@ def ranking_distribution(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	"network-dominance",
 	dependencies=["store", "animals", "days_range", "animal_colors"],
 )
-def network_dominance(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
+def network_dominance(cfg: PlotConfig) -> go.Figure:
 	"""Generates a social dominance network graph of animal interactions.
 
 	Visualizes hierarchy and aggression where node size represents ranking
@@ -149,7 +149,7 @@ def network_dominance(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	"chasings-heatmap",
 	dependencies=["store", "animals", "days_range", "phase_type", "agg_switch"],
 )
-def chasings_heatmap(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
+def chasings_heatmap(cfg: PlotConfig) -> go.Figure:
 	"""Generates a chaser-vs-chased interaction heatmap.
 
 	Displays a matrix of agonistic interactions, where rows and columns represent
@@ -170,7 +170,7 @@ def chasings_heatmap(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	"chasings-line",
 	dependencies=["store", "animals", "days_range", "animal_colors", "agg_switch"],
 )
-def chasings_line(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
+def chasings_line(cfg: PlotConfig) -> go.Figure:
 	"""Generates a line plot of chasing frequency per hour.
 
 	Shows the diurnal rhythm of aggression. For mean includes a shaded area representing
@@ -203,7 +203,7 @@ def chasings_line(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 		"agg_switch",
 	],
 )
-def activity(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
+def activity(cfg: PlotConfig) -> go.Figure:
 	"""Generates a bar or box plot of animal activity levels by position.
 
 	Quantifies behavior either by the number of visits to specific locations
@@ -221,7 +221,7 @@ def activity(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	"activity-line",
 	dependencies=["store", "animals", "days_range", "animal_colors", "agg_switch"],
 )
-def activity_line(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
+def activity_line(cfg: PlotConfig) -> go.Figure:
 	"""Generates a line plot of diurnal activity based on antenna crossings.
 
 	Plots the number of antenna detections per hour, allowing for
@@ -254,7 +254,7 @@ def activity_line(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	"time-per-cage-heatmap",
 	dependencies=["store", "animals", "days_range", "cages", "agg_switch"],
 )
-def time_per_cage(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
+def time_per_cage(cfg: PlotConfig) -> go.Figure:
 	"""Generates a grid of heatmaps showing cage occupancy over 24 hours.
 
 	Creates a subplot for each cage, visualizing when and for how long specific animals
@@ -285,7 +285,7 @@ def time_per_cage(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 		"pairwise_switch",
 	],
 )
-def pairwise_sociability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
+def pairwise_sociability(cfg: PlotConfig) -> go.Figure:
 	"""Generates heatmaps of pairwise sociability per cage.
 
 	Visualizes how often pairs of animals meet or spend time together,
@@ -314,7 +314,7 @@ def pairwise_sociability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	"cohort-heatmap",
 	dependencies=["store", "animals", "phase_type", "days_range", "sociability_switch"],
 )
-def within_cohort_sociability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
+def within_cohort_sociability(cfg: PlotConfig) -> go.Figure:
 	"""Generates a normalized heatmap of sociability within the entire cohort.
 
 	Provides a high-level view of social bonds by calculating the mean
@@ -337,7 +337,7 @@ def within_cohort_sociability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]
 	"time-alone-bar",
 	dependencies=["store", "phase_type", "days_range", "agg_switch", "animal_colors"],
 )
-def time_alone(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
+def time_alone(cfg: PlotConfig) -> go.Figure:
 	"""Generates a stacked bar plot of time spent alone.
 
 	Shows the duration each animal spent without any other animals present,
@@ -358,7 +358,7 @@ def time_alone(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	"network-sociability",
 	dependencies=["store", "animals", "animal_colors", "days_range"],
 )
-def network_sociability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
+def network_sociability(cfg: PlotConfig) -> go.Figure:
 	"""Generates a social dominance network graph of animal interactions.
 
 	Visualizes hierarchy and aggression where node size represents ranking
@@ -378,7 +378,7 @@ def network_sociability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
 	"social-stability",
 	dependencies=["store", "animals", "animal_colors", "phase_type", "days_range"],
 )
-def social_stability(cfg: PlotConfig) -> tuple[go.Figure, pl.DataFrame]:
+def social_stability(cfg: PlotConfig) -> go.Figure:
 	"""Generates a social stability scatter plot.
 
 	Visualizes stability of a relationship of every pair across chosen days

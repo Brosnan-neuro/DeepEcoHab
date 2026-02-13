@@ -80,7 +80,9 @@ def toggle_opt(n_clicks: int, is_open: bool) -> bool:
 	State({"type": "required-input", "index": ALL}, "invalid"),
 	prevent_initial_call=True,
 )
-def validate_and_highlight(inputs: list[str], current_valid: list[bool], current_invalid: list[bool]):
+def validate_and_highlight(
+	inputs: list[str], current_valid: list[bool], current_invalid: list[bool]
+):
 	if not ctx.triggered_id:
 		return no_update
 

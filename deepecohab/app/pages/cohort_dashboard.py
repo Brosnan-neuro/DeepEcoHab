@@ -11,8 +11,8 @@ from deepecohab.plotting import plot_catalog
 from deepecohab.utils import (
 	auxfun_dashboard,
 	auxfun_plots,
- 	cache_config,
-) 
+	cache_config,
+)
 
 dash.register_page(__name__, path="/cohort_dashboard", name="Cohort Dashboard")
 
@@ -62,10 +62,7 @@ def render_graphs_layout(cfg):
 
 
 @callback(
-	[
-		Output({"type": "graph", "name": MATCH}, "figure"),
-		Output({"type": "store", "name": MATCH}, "data"),
-	],
+	Output({"type": "graph", "name": MATCH}, "figure"),
 	[
 		Input("days_range", "value"),
 		Input("phase_type", "value"),
@@ -87,7 +84,7 @@ def update_plots(
 	ranking_switch: str,
 	cfg: dict[str, Any],
 ) -> tuple[go.Figure, dict]:
-	plot_name: str = ctx.outputs_grouping[0]["id"]["name"]
+	plot_name: str = ctx.outputs_grouping["id"]["name"]
 	plot_attributes = plot_catalog.plot_registry.get_dependencies(plot_name)
 
 	if ctx.triggered_id is not None and ctx.triggered_id not in plot_attributes:
@@ -118,15 +115,14 @@ def update_plots(
 		position_colors=positions_colors,
 	)
 
-	fig, data = plot_catalog.plot_registry.get_plot(plot_name, plot_cfg)
+	fig = plot_catalog.plot_registry.get_plot(plot_name, plot_cfg)
 
-	return fig, auxfun_dashboard.to_store_json(data)
+	return fig
 
 
 @callback(
 	[
 		Output({"figure": "comparison-plot", "side": MATCH}, "figure"),
-		Output({"store": "comparison-plot", "side": MATCH}, "data"),
 		Output({"container": "position_switch", "side": MATCH}, "hidden"),
 		Output({"container": "pairwise_switch", "side": MATCH}, "hidden"),
 	],
@@ -169,14 +165,13 @@ def update_comparison_plot(switches: list[Any], cfg: dict[str, Any]) -> tuple[go
 		position_colors=positions_colors,
 	)
 
-	fig, data = plot_catalog.plot_registry.get_plot(input_dict["plot-dropdown"], plot_cfg)
+	fig = plot_catalog.plot_registry.get_plot(input_dict["plot-dropdown"], plot_cfg)
 
 	pairwise_hidden = "pairwise_switch" not in plot_attributes
 	position_hidden = "position_switch" not in plot_attributes
 
 	return (
 		fig,
-		auxfun_dashboard.to_store_json(data),
 		position_hidden,
 		pairwise_hidden,
 	)
@@ -246,21 +241,18 @@ def download_selected_data(
 	Input({"type": "download-btn-comparison", "fmt": ALL, "side": MATCH}, "n_clicks"),
 	[
 		State({"figure": "comparison-plot", "side": MATCH}, "figure"),
-		State({"store": "comparison-plot", "side": MATCH}, "data"),
 		State({"type": "plot-dropdown", "side": MATCH}, "value"),
 	],
 	prevent_initial_call=True,
 )
-def download_comparison_data(
-	btn_click: int, figure: dict, plot_type: str
-) -> dict[str, Any | None]:
+def download_comparison_data(btn_click: int, figure: dict, plot_type: str) -> dict[str, Any | None]:
 	"""Triggers download from the comparisons tab"""
 	triggered = ctx.triggered_id
 	if not triggered:
 		raise dash.exceptions.PreventUpdate
 
 	figure = go.Figure(figure)
-	if (figure is None):
+	if figure is None:
 		raise dash.exceptions.PreventUpdate
 
 	plot_name = f"comparison_{plot_type}"
