@@ -175,7 +175,12 @@ def calculate_ranking(
 		model = PlackettLuce(limit_sigma=True, balance=True)
 		ranking: dict[str, dict[str, float]] = {player: model.rating() for player in animal_ids}
 
-	match_df: pl.LazyFrame = auxfun.load_ecohab_data(cfg, "match_df").sort("datetime").collect()
+	match_df: pl.DataFrame = (
+		auxfun.load_ecohab_data(cfg, "match_df")
+		.select("loser", "winner", "datetime")
+		.sort("datetime")
+		.collect()
+	)
 	rows: list[dict[str, Any]] = []
 
 	for loser_name, winner_name, dtime in match_df.iter_rows():
@@ -215,7 +220,9 @@ def calculate_ranking(
 @df_registry.register("match_df")
 def get_matches(lf: pl.LazyFrame, results_path: Path, save_data: bool) -> None:
 	"""Creates a lazyframe of matches"""
-	matches = lf.select("animal_id", "animal_id_chasing", "datetime_chasing").rename(
+	matches = lf.select(
+		"animal_id", "animal_id_chasing", "datetime_chasing", "position", "chasing_length"
+	).rename(
 		{
 			"animal_id": "loser",
 			"animal_id_chasing": "winner",
@@ -282,11 +289,19 @@ def calculate_chasings(
 		pl.col("datetime") < pl.col("datetime_chasing"),
 	)
 
-	get_matches(intermediate, results_path, save_data)
+	get_matches(
+		intermediate.with_columns(
+			(pl.col("datetime") - pl.col("tunnel_entry"))
+			.dt.total_seconds(fractional=True)
+			.alias("chasing_length")
+		),
+		results_path,
+		save_data,
+	)
 
 	chasings = (
 		intermediate.group_by(
-			["phase", "day", "phase_count", "hour", "animal_id_chasing", "animal_id"]
+			["phase", "day", "phase_count", "hour", "position", "animal_id_chasing", "animal_id"]
 		)
 		.len(name="chasings")
 		.rename({"animal_id": "chased", "animal_id_chasing": "chaser"})
@@ -296,11 +311,13 @@ def calculate_chasings(
 	all_pairs = [
 		(a1, a2) for a1, a2 in list(product(cfg["animal_ids"], cfg["animal_ids"])) if a1 != a2
 	]
+	directional_tunnels = [pos for pos in cfg["antenna_combinations"].values() if "cage" not in pos]
 	pairs_df = pl.LazyFrame(
-		all_pairs,
+		[(*p, c) for p, c in product(all_pairs, directional_tunnels)],
 		schema={
 			"chaser": pl.Enum(cfg["animal_ids"]),
 			"chased": pl.Enum(cfg["animal_ids"]),
+			"position": pl.Categorical,
 		},
 		orient="row",
 	)
@@ -311,7 +328,7 @@ def calculate_chasings(
 
 	chasings = full_grid.join(
 		chasings,
-		on=["phase", "day", "phase_count", "chaser", "chased"],
+		on=["phase", "day", "phase_count", "position", "chaser", "chased"],
 		how="left",
 	).fill_null(0)
 
