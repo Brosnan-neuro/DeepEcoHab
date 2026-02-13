@@ -77,10 +77,6 @@ def generate_settings_block(
 								tooltip={
 									"placement": "bottom",
 									"always_visible": True,
-									"style": {
-										"color": "LightSteelBlue",
-										"fontSize": "12px",
-									},
 								},
 								updatemode="mouseup",
 								included=True,
@@ -371,7 +367,7 @@ def generate_download_block() -> dbc.Modal:
 	"""Generate Downloads modal component"""
 	modal = dbc.Modal(
 		[
-			dbc.ModalHeader([dbc.ModalTitle("Downloads")]),
+			dbc.ModalHeader([dbc.ModalTitle("Downloads", className="fw-bold")]),
 			dbc.ModalBody(
 				dcc.Tabs(
 					id="download-tabs",
@@ -380,9 +376,6 @@ def generate_download_block() -> dbc.Modal:
 						generate_plot_download_tab(),
 						generate_csv_download_tab(),
 					],
-					style={
-						"backgroundColor": "#1f2c44",
-					},
 				)
 			),
 			dcc.Download(id="download-component"),
@@ -538,7 +531,7 @@ def build_filter_expr(
 	exprs: list[pl.Expr] = []
 
 	if days_range is not None and "day" in columns:
-		exprs.append(pl.col("day").is_between(*days_range, closed='both'))
+		exprs.append(pl.col("day").is_between(*days_range, closed="both"))
 
 	if phase_type is not None and "phase" in columns:
 		exprs.append(pl.col("phase").is_in(phase_type))

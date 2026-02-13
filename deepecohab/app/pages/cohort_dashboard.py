@@ -1,4 +1,3 @@
-import datetime as dt
 from typing import Any
 
 import dash
@@ -12,8 +11,8 @@ from deepecohab.plotting import plot_catalog
 from deepecohab.utils import (
 	auxfun_dashboard,
 	auxfun_plots,
-)
-from deepecohab.utils.cache_config import get_project_data
+ 	cache_config,
+) 
 
 dash.register_page(__name__, path="/cohort_dashboard", name="Cohort Dashboard")
 
@@ -96,7 +95,7 @@ def update_plots(
 
 	phase_list: list[str] = [phase_type] if phase_type != "all" else ["dark_phase", "light_phase"]
 
-	store = get_project_data(cfg)
+	store = cache_config.get_project_data(cfg)
 	animals = cfg["animal_ids"]
 	animal_colors = auxfun_plots.color_sampling(animals)
 	cages = cfg["cages"]
@@ -147,7 +146,7 @@ def update_comparison_plot(switches: list[Any], cfg: dict[str, Any]) -> tuple[go
 		else ["dark_phase", "light_phase"]
 	)
 
-	store = get_project_data(cfg)
+	store = cache_config.get_project_data(cfg)
 	animals = cfg["animal_ids"]
 	animal_colors = auxfun_plots.color_sampling(animals)
 	cages = cfg["cages"]
@@ -231,7 +230,7 @@ def download_selected_data(
 		raise dash.exceptions.PreventUpdate
 
 	if triggered["side"] == "dfs":
-		store = get_project_data(cfg)
+		store = cache_config.get_project_data(cfg)
 		return auxfun_dashboard.download_dataframes(selected_dfs, phase_type, days_range, store)
 	elif triggered["side"] == "plots":
 		return auxfun_dashboard.download_plots(

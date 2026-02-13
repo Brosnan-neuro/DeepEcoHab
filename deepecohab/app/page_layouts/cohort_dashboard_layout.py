@@ -9,18 +9,18 @@ def generate_graphs_layout(days_range: list[int]) -> html.Div:
 	return html.Div(
 		[
 			html.Div(
-			auxfun_dashboard.generate_settings_block(
-				phase_type_id="phase_type",
-				aggregate_stats_id="agg_switch",
-				slider_id="days_range",
-				position_switch_id="position_switch",
-				pairwise_switch_id="pairwise_switch",
-				ranking_switch_id="ranking_switch",
-				sociability_switch_id="sociability_switch",
-				days_range=days_range,
-				include_download=True,
-			),
-			className="sticky-settings-block",
+				auxfun_dashboard.generate_settings_block(
+					phase_type_idf="phase_type",
+					aggregate_stats_id="agg_switch",
+					slider_id="days_range",
+					position_switch_id="position_switch",
+					pairwise_switch_id="pairwise_switch",
+					ranking_switch_id="ranking_switch",
+					sociability_switch_id="sociability_switch",
+					days_range=days_range,
+					include_download=True,
+				),
+				className="sticky-settings-block",
 			),
 			dbc.Container(
 				[

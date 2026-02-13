@@ -45,11 +45,7 @@ def generate_cohort_card():
 										allow_direct_input=False,
 										tooltip={
 											"placement": "bottom",
-											"always_visible": False,
-											"style": {
-												"color": "LightSteelBlue",
-												"fontSize": "12px",
-											},
+											"always_visible": True,
 										},
 										className="rc-slider",
 									),
@@ -79,8 +75,7 @@ def generate_cohort_card():
 												value=0,
 												striped=True,
 												animated=True,
-												className="mb-3",
-												style={"height": "30px"},
+												className="progress-bar",
 											),
 											html.P(
 												id="progress-text",

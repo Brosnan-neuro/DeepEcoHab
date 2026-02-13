@@ -1,6 +1,7 @@
 import base64
 import datetime as dt
 from pathlib import Path
+from typing import Any
 
 import dash
 import dash_bootstrap_components as dbc
@@ -12,30 +13,30 @@ from deepecohab.core import create_data_structure, create_project
 from deepecohab.utils.cache_config import launch_cache
 
 
-def _is_valid_time(time_str):
+def _is_valid_time(time_str: str) -> bool:
 	try:
-		dt.datetime.strptime(str(time_str), "%H:%M:%S")
+		dt.datetime.strptime(time_str, "%H:%M:%S")
 		return True
 	except (ValueError, TypeError):
 		return False
 
 
-def _get_status(idx, val):
-	if not (val and str(val).strip()):
+def _get_status(idx: str, input: str) -> bool:
+	if not (input and input.strip()):
 		return False
 
 	if idx == "proj-loc":
 		try:
-			Path(val)
+			Path(input)
 			return True
 		except OSError:
 			return False
 
 	if idx == "data-loc":
-		return Path(str(val)).is_dir()
+		return Path(input).is_dir()
 
 	if idx in ["light-start", "dark-start"]:
-		return _is_valid_time(val)
+		return _is_valid_time(input)
 
 	return True
 
@@ -51,8 +52,8 @@ layout = home_layout.generate_layout()
 	State("load-project-modal", "is_open"),
 	prevent_initial_call=True,
 )
-def toggle_modal(n_clicks, is_open):
-	"""Opens and closes Downloads modal component"""
+def toggle_modal(n_clicks: int, is_open: bool) -> bool:
+	"""Opens and closes modal component for project loading"""
 	if n_clicks:
 		return not is_open
 	return is_open
@@ -64,7 +65,7 @@ def toggle_modal(n_clicks, is_open):
 	State("opt-collapse", "is_open"),
 	prevent_initial_call=True,
 )
-def toggle_opt(n, is_open):
+def toggle_opt(n_clicks: int, is_open: bool) -> bool:
 	return not is_open
 
 
@@ -79,14 +80,14 @@ def toggle_opt(n, is_open):
 	State({"type": "required-input", "index": ALL}, "invalid"),
 	prevent_initial_call=True,
 )
-def validate_and_highlight(values, current_valid, current_invalid):
+def validate_and_highlight(inputs: list[str], current_valid: list[bool], current_invalid: list[bool]):
 	if not ctx.triggered_id:
 		return no_update
 
 	inputs_meta = ctx.inputs_list[0]
 
 	technical_validity = [
-		_get_status(meta["id"]["index"], val) for meta, val in zip(inputs_meta, values)
+		_get_status(meta["id"]["index"], val) for meta, val in zip(inputs_meta, inputs)
 	]
 
 	new_valid_ui = []
@@ -132,21 +133,21 @@ def validate_and_highlight(values, current_valid, current_invalid):
 	prevent_initial_call=True,
 )
 def _create_project(
-	n_clicks,
-	name,
-	loc,
-	data,
-	light,
-	dark,
-	ext,  # placeholder for now
-	prefix,
-	tz,
-	animals,
-	layouts,
-	exp_start,
-	exp_end,
-	sanitize,
-	min_cross,
+	n_clicks: int,
+	name: str,
+	loc: str,
+	data: str,
+	light: str,
+	dark: str,
+	ext: str,  # placeholder for now
+	prefix: str,
+	tz: str,
+	animals: str,
+	layouts: list[bool],
+	exp_start: str,
+	exp_end: str,
+	sanitize: bool,
+	min_cross: int,
 ):
 	if n_clicks == 0:
 		return no_update
@@ -198,7 +199,6 @@ def _create_project(
 					icon="success",
 					duration=5000,
 					class_name="custom-toast",
-					style={"width": 350},
 				),
 			)
 		else:
@@ -214,7 +214,6 @@ def _create_project(
 				is_open=True,
 				dismissable=True,
 				icon="danger",
-				style={"width": 350},
 				class_name="custom-toast",
 			),
 		]
@@ -226,11 +225,11 @@ def _create_project(
 		Output("load-project-modal", "is_open", allow_duplicate=True),
 		Output("toast-container", "children", allow_duplicate=True),
 	],
-	Input("upload-data", "contents"),
-	State("upload-data", "filename"),
+	Input("upload-config", "contents"),
+	State("upload-config", "filename"),
 	prevent_initial_call=True,
 )
-def load_config_to_store(contents, filename):
+def load_config_to_store(contents: dict[str, Any], filename: str):
 	if not contents:
 		return [no_update] * 3
 
@@ -266,7 +265,7 @@ def load_config_to_store(contents, filename):
 	Input("clear-session-btn", "n_clicks"),
 	prevent_initial_call=True,
 )
-def clear_app_cache(n_clicks):
+def clear_app_cache(n_clicks: int):
 	if not n_clicks:
 		return no_update, no_update
 
@@ -289,5 +288,5 @@ def clear_app_cache(n_clicks):
 	Output("clear-session-btn", "disabled"),
 	Input("project-config-store", "data"),
 )
-def toggle_clear_button(config_data):
+def toggle_clear_button(config_data: dict[str, Any]):
 	return config_data is None or not config_data

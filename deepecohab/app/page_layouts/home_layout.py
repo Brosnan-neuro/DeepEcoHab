@@ -24,24 +24,15 @@ def generate_input_block(
 
 modal = dbc.Modal(
 	[
-		dbc.ModalHeader([dbc.ModalTitle("Downloads")]),
+		dbc.ModalHeader([dbc.ModalTitle("Upload config")]),
 		dbc.ModalBody(
 			[
 				dcc.Upload(
-					id="upload-data",
-					children=html.Div(["Drag and Drop or ", html.A("Select Files")]),
-					style={
-						"width": "100%",
-						"height": "60px",
-						"lineHeight": "60px",
-						"borderWidth": "1px",
-						"borderStyle": "dashed",
-						"borderRadius": "5px",
-						"textAlign": "center",
-						"margin": "10px",
-					},
+					id="upload-config",
+					children=html.Div(["Drag and Drop or ", html.A("Select config.toml")]),
+					className="upload_config",
 				),
-				html.Div(id="output-data-upload"),
+				html.Div(id="output-config-upload"),
 			]
 		),
 	],
@@ -289,7 +280,7 @@ def generate_layout():
 					),
 					html.Div(
 						id="toast-container",
-      					className="toast-container",
+						className="toast-container",
 					),
 				],
 				xs=12,
@@ -299,8 +290,7 @@ def generate_layout():
 			),
 			dbc.Col(
 				html.Img(src="assets/logo_test.png", width=500, height=500),
-				className="d-flex justify-content-center align-items-center",
-				style={"height": "100vh"},
+				className="fullscreen_centered",
 			),
 		],
 		justify="left",

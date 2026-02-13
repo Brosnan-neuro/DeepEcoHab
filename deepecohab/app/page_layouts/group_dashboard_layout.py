@@ -3,8 +3,9 @@ from dash import dcc, html
 
 
 def generate_layout(fig):
-	html.Div(
+	return html.Div(
 		[
+			html.H1("THIS IS A MOCK PLACEHOLDER - GROUP ANALYSIS COMING SOON!"),
 			dbc.Row(
 				[
 					dbc.Col(
@@ -33,7 +34,6 @@ def generate_layout(fig):
 							),
 						],
 						width=3,
-						style={"borderRadius": "10px", "minHeight": "70vh"},
 					),
 					dbc.Col(
 						[
@@ -73,6 +73,6 @@ def generate_layout(fig):
 						width=9,
 					),
 				]
-			)
+			),
 		]
 	)
