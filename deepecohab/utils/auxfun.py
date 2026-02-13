@@ -5,6 +5,7 @@ from typing import (
 	Any,
 	Callable,
 	Literal,
+	Iterator,
 )
 
 import polars as pl
@@ -14,6 +15,16 @@ import toml
 class DataFrameRegistry:
 	def __init__(self):
 		self._registry: dict[str, Callable] = {}
+		self.analysis_steps: list[str] = [
+            "activity_df",
+            "cage_occupancy",
+            "chasings_df",
+            "ranking",
+            "pairwise_meetings",
+            "incohort_sociability",
+            "time_alone",
+            "pairwise_meetings",
+        ]
 
 	def register(self, name: str):
 		"""Decorator to register a new plot type."""
@@ -24,16 +35,21 @@ class DataFrameRegistry:
 
 		return wrapper
 
-	def get_function(self, name: str) -> Callable:
-		"""Retrieve a function by its registered name."""
-		if name not in self._registry:
-			available: str = ", ".join(self._registry.keys())
-			raise ValueError(f"'{name}' not found. Available: {available}")
-		return self._registry[name]
-
 	def list_available(self) -> list[str]:
 		"""Returns a list of all registered function names."""
 		return list(self._registry.keys())
+
+	def run_pipeline(self, config: dict[str, Any], **kwargs) -> Iterator[tuple[str, int, list[int]]]:
+		"""Runs the pipeline and yields status updates.
+
+		Yields:
+			(step_name, current_index, total_steps)
+		"""
+		total = len(self.analysis_steps)
+		for i, name in enumerate(self.analysis_steps):
+			yield name, i + 1, total
+			func = self._registry[name]
+			func(config, **kwargs)
 
 
 df_registry = DataFrameRegistry()

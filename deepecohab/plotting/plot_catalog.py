@@ -23,19 +23,19 @@ class PlotConfig:
 	analysis.
 	"""
 
-	store: dict
-	days_range: list[int]
-	phase_type: list[str]
-	agg_switch: Literal["sum", "mean"]
-	position_switch: Literal["visits", "time"]
-	pairwise_switch: Literal["time_together", "pairwise_encounters"]
-	sociability_switch: Literal["proportion_together", "sociability"]
-	ranking_switch: Literal["intime", "stability"]
-	animals: list[str]
-	animal_colors: list[str]
-	cages: list[str]
-	positions: list[str]
-	position_colors: list[str]
+	store: dict | None = None
+	days_range: list[int] | None = None
+	phase_type: list[str] | None = None
+	agg_switch: Literal["sum", "mean"] | None = None
+	position_switch: Literal["visits", "time"] | None = None
+	pairwise_switch: Literal["time_together", "pairwise_encounters"] | None = None
+	sociability_switch: Literal["proportion_together", "sociability"] | None = None
+	ranking_switch: Literal["intime", "stability"] | None = None
+	animals: list[str] | None = None
+	animal_colors: list[str] | None = None
+	cages: list[str] | None = None
+	positions: list[str] | None = None
+	position_colors: list[str] | None = None
 
 
 class PlotRegistry:

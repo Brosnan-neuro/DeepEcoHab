@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
-from openskill.models import PlackettLuce
+from openskill.models import PlackettLuce, PlackettLuceRating
 
 from deepecohab.utils import auxfun
 from deepecohab.utils.auxfun import df_registry
@@ -15,6 +15,7 @@ def calculate_cage_occupancy(
 	config_path: str | Path | dict,
 	save_data: bool = True,
 	overwrite: bool = False,
+	**kwargs,
 ) -> pl.LazyFrame:
 	"""Calculates time spent per animal per phase in every cage.
 
@@ -81,6 +82,7 @@ def calculate_activity(
 	config_path: str | Path | dict,
 	save_data: bool = True,
 	overwrite: bool = False,
+	**kwargs,
 ) -> pl.LazyFrame:
 	"""Calculates time spent and visits to every possible position per phase for every mouse.
 
@@ -134,18 +136,22 @@ def calculate_ranking(
 	config_path: str | Path | dict,
 	overwrite: bool = False,
 	save_data: bool = True,
-	ranking: dict | None = None,
+	**kwargs,
 ) -> pl.LazyFrame:
 	"""Calculate ranking using Plackett Luce algortihm. Each chasing event is a match
-	Args:
-	    config_path: path to project config file.
-	    save_data: toogles whether to save data.
-	    overwrite: toggles whether to overwrite the data.
-	    ranking: optionally, user can pass a dictionary from a different recording of same animals
-	             to start ranking from a certain point instead of 0
+	   Args:
+	       config_path: path to project config file.
+	       save_data: toogles whether to save data.
+	       overwrite: toggles whether to overwrite the data.
+	       ranking: optionally, user can pass a DataFrame from a different
+	recording of same animals to start ranking from a certain point instead of 0 by applying:
 
-	Returns:
-	    LazyFrame of ranking
+	ranking.group_by('animal_id').agg(pl.last('mu'), pl.last('sigma'))
+
+	on the previous rec of the same animals to get their last rank estimation.
+
+	   Returns:
+	       LazyFrame of ranking
 	"""
 	cfg: dict[str, Any] = auxfun.read_config(config_path)
 	key = "ranking"
@@ -157,12 +163,19 @@ def calculate_ranking(
 
 	results_path: Path = Path(cfg["project_location"]) / "results"
 
-	match_df: pl.LazyFrame = auxfun.load_ecohab_data(cfg, "match_df").sort("datetime").collect()
+	prev_ranking = kwargs.get("prev_ranking", None)
 	animal_ids: list[str] = cfg["animal_ids"]
 
-	model = PlackettLuce(limit_sigma=True, balance=True)
-	ranking: dict[str, dict[str, float]] = {player: model.rating() for player in animal_ids}
+	if isinstance(prev_ranking, dict):
+		ranking: dict[str, dict[str, float]] = {
+			name: PlackettLuce(mu=mu, sigma=sigma, limit_sigma=True, balance=True)
+			for name, mu, sigma in prev_ranking.iter_rows()
+		}
+	else:
+		model = PlackettLuce(limit_sigma=True, balance=True)
+		ranking: dict[str, dict[str, float]] = {player: model.rating() for player in animal_ids}
 
+	match_df: pl.LazyFrame = auxfun.load_ecohab_data(cfg, "match_df").sort("datetime").collect()
 	rows: list[dict[str, Any]] = []
 
 	for loser_name, winner_name, dtime in match_df.iter_rows():
@@ -218,17 +231,18 @@ def get_matches(lf: pl.LazyFrame, results_path: Path, save_data: bool) -> None:
 @df_registry.register("chasings_df")
 def calculate_chasings(
 	config_path: str | Path | dict,
-	chasing_time_window: list[int, int] = [0.1, 1.2],
 	overwrite: bool = False,
 	save_data: bool = True,
+	chasing_time_window: list[int, int] = [0.1, 1.2],
+	**kwargs,
 ) -> pl.LazyFrame:
 	"""Calculates chasing events per pair of mice for each phase
 
 	Args:
 	    config_path: path to project config file.
-		chasing_time_window: defines min and max length of the chasing event in seconds.
 	    save_data: toogles whether to save data.
 	    overwrite: toggles whether to overwrite the data.
+		chasing_time_window: defines min and max length of the chasing event in seconds. Defaults to [0.1, 1.2]
 
 	Returns:
 	    LazyFrame of chasings
@@ -264,7 +278,7 @@ def calculate_chasings(
 		pl.col("prev_position").is_in(cages),
 		(pl.col("datetime") - pl.col("tunnel_entry"))
 		.dt.total_seconds(fractional=True)
-		.is_between(*chasing_time_window, "none"),
+		.is_between(*chasing_time_window, closed="none"),
 		pl.col("datetime") < pl.col("datetime_chasing"),
 	)
 
@@ -314,6 +328,7 @@ def calculate_time_alone(
 	config_path: Path | str | dict,
 	save_data: bool = True,
 	overwrite: bool = False,
+	**kwargs,
 ) -> pl.LazyFrame:
 	"""Calculates time spent alone by animal per phase/day/cage
 
@@ -370,18 +385,19 @@ def calculate_time_alone(
 @df_registry.register("pairwise_meetings")
 def calculate_pairwise_meetings(
 	config_path: str | Path | dict,
-	minimum_time: int | float | None = 2,
 	save_data: bool = True,
 	overwrite: bool = False,
+	minimum_time: int | float | None = 2,
+	**kwargs,
 ) -> pl.LazyFrame:
 	"""Calculates time spent together and number of meetings by animals on a per phase, day and cage basis. Slow due to the nature of datetime overlap calculation.
 
 	Args:
 	    cfg: dictionary with the project config.
-	    minimum_time: sets minimum time together to be considered an interaction - in seconds i.e., if set to 2 any time spent in the cage together
-	               that is shorter than 2 seconds will be omited.
 	    save_data: toogles whether to save data.
 	    overwrite: toggles whether to overwrite the data.
+		minimum_time: sets minimum time together to be considered an interaction - in seconds i.e., if set to 2 any time spent in the cage together
+			that is shorter than 2 seconds will be omited. Defaults to 2.
 
 	Returns:
 	    LazyFrame of time spent together per phase, per cage.
@@ -471,6 +487,7 @@ def calculate_incohort_sociability(
 	config_path: dict,
 	save_data: bool = True,
 	overwrite: bool = False,
+	**kwargs,
 ) -> pl.LazyFrame:
 	"""Calculates in-cohort sociability. For more info: DOI:10.7554/eLife.19532.
 

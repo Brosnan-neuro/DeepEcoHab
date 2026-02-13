@@ -15,6 +15,7 @@ from deepecohab.core.create_project import (
 	create_ecohab_project as create_ecohab_project,
 )
 from deepecohab.plotting.plot_catalog import (
+	PlotConfig as PlotConfig,
 	plot_registry as plot_registry,
 )
 from deepecohab.utils.auxfun import (
