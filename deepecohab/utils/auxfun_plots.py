@@ -126,11 +126,12 @@ def create_node_trace(
 	return node_trace
 
 
-def prep_ranking_over_time(store: dict[str, pl.DataFrame]) -> pl.DataFrame:
+def prep_ranking_over_time(store: dict[str, pl.DataFrame], days_range: list[int]) -> pl.DataFrame:
 	"""Aggregate animal ordinal rankings by day, hour, and datetime."""
 	df = (
 		store["ranking"]
 		.lazy()
+		.filter(pl.col('day').is_between(*days_range))
 		.sort("datetime")
 		.group_by("day", "hour", "animal_id", "datetime", maintain_order=True)
 		.agg(pl.when(pl.first("day") == 1).then(pl.first("ordinal")).otherwise(pl.last("ordinal")))
@@ -139,19 +140,20 @@ def prep_ranking_over_time(store: dict[str, pl.DataFrame]) -> pl.DataFrame:
 	return df
 
 
-def prep_ranking_day_stability(store: dict[str, pl.DataFrame]) -> pl.DataFrame:
+def prep_ranking_day_stability(store: dict[str, pl.DataFrame], days_range: list[int]) -> pl.DataFrame:
 	"""Prepare daily dominance ranking using the last hour of each day."""
 	ranking = store["ranking"]
 	daily_rank = (
-		ranking.group_by(["day", "animal_id"])
-		.agg(
-			pl.col("ordinal").last(),
-		)
+		ranking
+		.lazy()
+		.filter(pl.col('day').is_between(*days_range))
+  		.group_by(["day", "animal_id"])
+		.agg(pl.col("ordinal").last())
 		.with_columns(
 			pl.col("ordinal").rank(method="average", descending=True).over("day").alias("rank")
 		)
 		.sort("day", "rank")
-	)
+	).collect(engine="in-memory")
 
 	return daily_rank
 

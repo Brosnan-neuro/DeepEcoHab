@@ -74,18 +74,18 @@ plot_registry = PlotRegistry()
 
 @plot_registry.register(
 	"ranking-line",
-	dependencies=["store", "animals", "animal_colors", "ranking_switch"],
+	dependencies=["store", "days_range", "animals", "animal_colors", "ranking_switch"],
 )
 def ranking_over_time(cfg: PlotConfig) -> go.Figure:
 	"""Generates ranking plots either over time or as day-to-day stability."""
 
 	match cfg.ranking_switch:
 		case "intime":
-			df = auxfun_plots.prep_ranking_over_time(cfg.store)
+			df = auxfun_plots.prep_ranking_over_time(cfg.store, cfg.days_range)
 			return plot_factory.plot_ranking_line(df, cfg.animals, cfg.animal_colors)
 
 		case "stability":
-			df = auxfun_plots.prep_ranking_day_stability(cfg.store)
+			df = auxfun_plots.prep_ranking_day_stability(cfg.store, cfg.days_range)
 			return plot_factory.plot_ranking_stability(df, cfg.animals, cfg.animal_colors)
 
 

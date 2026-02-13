@@ -88,7 +88,7 @@ def update_plots(
 	plot_attributes = plot_catalog.plot_registry.get_dependencies(plot_name)
 
 	if ctx.triggered_id is not None and ctx.triggered_id not in plot_attributes:
-		return no_update, no_update
+		return no_update
 
 	phase_list: list[str] = [phase_type] if phase_type != "all" else ["dark_phase", "light_phase"]
 
