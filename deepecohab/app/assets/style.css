@@ -415,6 +415,8 @@ a:hover {
 .filled-input {
   size: 16px;
   font-size: 14px;
+  margin-top: 20px;
+  margin-bottom: 0px;
 }
 
 .filled-input:placeholder-shown {
@@ -431,7 +433,6 @@ a:hover {
   font-style: normal;
 }
 
-.filled-input,
 .dash-slider,
 .form-control {
   margin-bottom: 15px;
@@ -740,7 +741,8 @@ body.sidebar-open #main-content {
 }
 
 .checkbox {
-  margin-bottom: 29px;
+  margin-bottom: 0px;
+  margin-top: 10px;
 }
 
 .upload_config {

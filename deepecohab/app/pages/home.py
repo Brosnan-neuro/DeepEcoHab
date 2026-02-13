@@ -15,7 +15,7 @@ from deepecohab.utils.cache_config import launch_cache
 
 def _is_valid_time(time_str: str) -> bool:
 	try:
-		dt.datetime.strptime(time_str, "%H:%M:%S")
+		dt.datetime.strptime(time_str, "%H:%M")
 		return True
 	except (ValueError, TypeError):
 		return False

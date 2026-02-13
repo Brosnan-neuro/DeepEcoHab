@@ -8,6 +8,7 @@ def generate_input_block(
 	placeholder: str,
 	required: bool,
 	value: str | None = None,
+	type: str | None = None,
 ) -> list[dbc.Label, dbc.Input]:
 
 	return [
@@ -17,6 +18,7 @@ def generate_input_block(
 			placeholder=placeholder,
 			required=required,
 			value=value,
+			type=type,
 			className="filled-input",
 		),
 	]
@@ -52,46 +54,48 @@ def generate_layout():
 							dbc.CardBody(
 								[
 									*generate_input_block(
-										"Project Name:",
-										{"type": "required-input", "index": "proj-name"},
-										"test_project",
-										True,
+										label_name="Project Name:",
+										id={"type": "required-input", "index": "proj-name"},
+										placeholder="test_project",
+										required=True,
 									),
 									*generate_input_block(
-										"Project Location:",
-										{"type": "required-input", "index": "proj-loc"},
-										"/etc/home/Documents/projects",
-										True,
+										label_name="Project Location:",
+										id={"type": "required-input", "index": "proj-loc"},
+										placeholder="/etc/home/Documents/projects",
+										required=True,
 									),
 									*generate_input_block(
-										"Location of Raw Data:",
-										{"type": "required-input", "index": "data-loc"},
-										"/etc/home/Documents/data",
-										True,
+										label_name="Location of Raw Data:",
+										id={"type": "required-input", "index": "data-loc"},
+										placeholder="/etc/home/Documents/data",
+										required=True,
 									),
 									dbc.Row(
 										[
 											dbc.Col(
 												generate_input_block(
-													"Start Light Phase:",
-													{
+													label_name="Start Light Phase:",
+													id={
 														"type": "required-input",
 														"index": "light-start",
 													},
-													"00:00:00",
-													True,
+													placeholder="00:00",
+													required=True,
+													type="time",
 												),
 												width=6,
 											),
 											dbc.Col(
 												generate_input_block(
-													"Start Dark Phase:",
-													{
+													label_name="Start Dark Phase:",
+													id={
 														"type": "required-input",
 														"index": "dark-start",
 													},
-													"12:00:00",
-													True,
+													placeholder="12:00",
+													required=True,
+													type="time",
 												),
 												width=6,
 											),
@@ -112,19 +116,19 @@ def generate_layout():
 													[
 														dbc.Col(
 															generate_input_block(
-																"Start datetime:",
-																"experiment-start",
-																"2024-11-05 00:00:00",
-																False,
+																label_name="Start datetime:",
+																id="experiment-start",
+																placeholder="2024-11-05 00:00:00",
+																required=False,
 															),
 															width=6,
 														),
 														dbc.Col(
 															generate_input_block(
-																"End datetime:",
-																"experiment-end",
-																"2024-11-29 12:00:00",
-																False,
+																label_name="End datetime:",
+																id="experiment-end",
+																placeholder="2024-11-29 12:00:00",
+																required=False,
 															),
 															width=6,
 														),
@@ -135,29 +139,29 @@ def generate_layout():
 													[
 														dbc.Col(
 															generate_input_block(
-																"Data extension",
-																"file_ext",
-																"txt",
-																False,
-																"txt",
+																label_name="Data extension",
+																id="file_ext",
+																placeholder="txt",
+																required=False,
+																value="txt",
 															),
 														),
 														dbc.Col(
 															generate_input_block(
-																"Data prefix",
-																"file_prefix",
-																"COM",
-																False,
-																"COM",
+																label_name="Data prefix",
+																id="file_prefix",
+																placeholder="COM",
+																required=False,
+																value="COM",
 															),
 														),
 														dbc.Col(
 															generate_input_block(
-																"Timezone",
-																"timezone",
-																"Europe/Warsaw",
-																False,
-																"Europe/Warsaw",
+																label_name="Timezone",
+																id="timezone",
+																placeholder="Europe/Warsaw",
+																required=False,
+																value="Europe/Warsaw",
 															),
 														),
 													]
@@ -166,42 +170,57 @@ def generate_layout():
 													[
 														dbc.Col(
 															generate_input_block(
-																"Animal IDs:",
-																"animal-ids",
-																"ID_01, ID_02, etc.",
-																False,
+																label_name="Animal IDs:",
+																id="animal-ids",
+																placeholder="ID_01, ID_02, etc.",
+																required=False,
 															),
+															align="center",
 															width=7,
 														),
 														dbc.Col(
 															[
-																dbc.Label(
-																	"Sanitize IDs:",
-																	class_name="home-label",
+																dbc.Row(
+																	[
+																		dbc.Col(
+																			dbc.Label(
+																				"Sanitize IDs:",
+																				className="home-label",
+																			)
+																		),
+																		dbc.Col(
+																			dbc.Checkbox(
+																				id="sanitize-check",
+																				value=True,
+																				className="checkbox",
+																			)
+																		, align='center'),
+																	],
+																	className="mb-0",
 																),
-																dbc.Label(
-																	"Min antenna crossings:",
-																	class_name="home-label",
+																dbc.Row(
+																	[
+																		dbc.Col(
+																			dbc.Label(
+																				"Min antenna crossings:",
+																				className="home-label",
+																			)
+																		),
+																		dbc.Col(
+																			dbc.Input(
+																				id="min-cross",
+																				placeholder=100,
+																				value=100,
+																				type="number",
+																				step=1,
+																				className="filled-input",
+																			)
+																		),
+																	],
+																	className="mb-0",
 																),
-															]
-														),
-														dbc.Col(
-															[
-																dbc.Checkbox(
-																	id="sanitize-check",
-																	value=True,
-																	class_name="checkbox",
-																),
-																dbc.Input(
-																	id="min-cross",
-																	placeholder=100,
-																	value=100,
-																	type="number",
-																	step=1,
-																	class_name="filled-input mb-0",
-																),
-															]
-														),
+															], align="center"
+														), 
 													],
 													align="end",
 												),

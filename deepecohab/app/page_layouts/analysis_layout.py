@@ -17,9 +17,10 @@ def generate_cohort_card():
 										class_name="mb-3",
 									),
 									dbc.Input(
-										id="styled-numeric-input",
+										id="numeric-input",
 										type="number",
-										min=2,
+										min=0,
+										value=2,
 										placeholder="2",
 										class_name="filled-input",
 									),

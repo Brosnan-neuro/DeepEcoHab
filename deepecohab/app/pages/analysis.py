@@ -33,7 +33,7 @@ def update_analysis_page(config):
 	],
 	Input("antenna-button", "n_clicks"),
 	State("project-config-store", "data"),
-	State("styled-numeric-input", "value"),
+	State("numeric-input", "value"),
 	State("chasing_window", "value"),
 	prevent_initial_call=True,
 )
