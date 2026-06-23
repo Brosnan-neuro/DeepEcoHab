@@ -28,11 +28,13 @@ class PlotConfig:
 	pairwise_switch: Literal["time_together", "pairwise_encounters"] | None = None
 	sociability_switch: Literal["proportion_together", "sociability"] | None = None
 	ranking_switch: Literal["intime", "stability"] | None = None
+	food_cage_direction_switch: Literal["overall", "toward_food", "away_food"] | None = None
 	animals: list[str] | None = None
 	animal_colors: list[str] | None = None
 	cages: list[str] | None = None
 	positions: list[str] | None = None
 	position_colors: list[str] | None = None
+	tunnel_positions: list[str] | None = None
 	light_dark_onset: dict[str, float] | None = None
 
 
@@ -306,6 +308,7 @@ def prep_chasings_heatmap(
 	days_range: list[int],
 	phase_type: list[str],
 	agg_switch: Literal["mean", "sum"],
+	positions: list[str] | None = None,
 ) -> np.ndarray:
 	"""Pivot chasing interactions into a chaser-vs-chased matrix for heatmap visualization."""
 	join_df = pl.LazyFrame(
@@ -322,6 +325,10 @@ def prep_chasings_heatmap(
 		case "mean":
 			agg_func = pl.mean("chasings").round(2).alias("mean")
 
+	position_filter = (
+		pl.lit(True) if positions is None else pl.col("position").cast(pl.String).is_in(positions)
+	)
+
 	img = (
 		store["chasings_df"]
 		.lazy()
@@ -329,12 +336,18 @@ def prep_chasings_heatmap(
 		.filter(
 			pl.col("phase").is_in(phase_type),
 			pl.col("day").is_between(days_range[0], days_range[1]),
+			position_filter,
+		)
+		.with_columns(
+			pl.col("chaser").cast(pl.Enum(animals)),
+			pl.col("chased").cast(pl.Enum(animals)),
 		)
 		.group_by("day", "chaser", "chased")
 		.agg(pl.sum("chasings"))
 		.group_by("chaser", "chased", maintain_order=True)
 		.agg(agg_func)
 		.join(join_df, on=["chaser", "chased"], how="right")
+		.fill_null(0)
 		.collect(engine="in-memory")
 		.pivot(
 			on="chaser",
@@ -352,9 +365,13 @@ def prep_chasings_line(
 	store: dict[str, pl.DataFrame],
 	animals: list[str],
 	days_range: list[int],
+	positions: list[str] | None = None,
 ) -> pl.DataFrame:
 	"""Calculate hourly chasing aggregates including mean and SEM for time-series plotting."""
 	n_days = 1 if days_range[0] == days_range[1] else len(range(*days_range)) + 1
+	position_filter = (
+		pl.lit(True) if positions is None else pl.col("position").cast(pl.String).is_in(positions)
+	)
 
 	join_df = pl.LazyFrame(
 		(
@@ -376,7 +393,14 @@ def prep_chasings_line(
 	df = (
 		store["chasings_df"]
 		.lazy()
-		.filter(pl.col("day").is_between(days_range[0], days_range[1]))
+		.filter(
+			pl.col("day").is_between(days_range[0], days_range[1]),
+			position_filter,
+		)
+		.with_columns(
+			pl.col("chaser").cast(pl.Enum(animals)),
+			pl.col("chased").cast(pl.Enum(animals)),
+		)
 		.join(
 			join_df,
 			on=["chaser", "chased", "hour", "day"],
@@ -425,6 +449,236 @@ def prep_activity(
 	).collect(engine="in-memory")
 
 	return df
+
+
+def prep_chasing_trains(
+	store: dict[str, pl.DataFrame],
+	days_range: list[int],
+	phase_type: list[str],
+	max_pause_seconds: float = 10,
+	positions: list[str] | None = None,
+) -> pl.DataFrame:
+	"""Summarize uninterrupted repeated chases by ordered animal pair."""
+	position_filter = (
+		pl.lit(True) if positions is None else pl.col("position").cast(pl.String).is_in(positions)
+	)
+	events = store["match_df"].lazy().sort("datetime")
+	gap_seconds = (
+		pl.col("datetime") - pl.col("datetime").shift(1)
+	).dt.total_seconds(fractional=True)
+	continues_train = (
+		(pl.col("winner") == pl.col("winner").shift(1))
+		& (pl.col("loser") == pl.col("loser").shift(1))
+		& (gap_seconds <= max_pause_seconds)
+	).fill_null(False)
+
+	trains = (
+		events.with_columns((~continues_train).cum_sum().alias("train_id"))
+		.group_by("train_id", "winner", "loser", maintain_order=True)
+		.agg(
+			pl.first("day").alias("day"),
+			pl.first("phase").alias("phase"),
+			pl.first("position").alias("position"),
+			pl.len().alias("train_length"),
+		)
+		.filter(
+			pl.col("train_length") >= 2,
+			pl.col("phase").is_in(phase_type),
+			pl.col("day").is_between(days_range[0], days_range[1]),
+			position_filter,
+		)
+	)
+
+	return (
+		trains.group_by("winner", "loser")
+		.agg(
+			pl.len().alias("trains"),
+			pl.sum("train_length").alias("events_in_trains"),
+			pl.mean("train_length").round(2).alias("mean_train_length"),
+			pl.max("train_length").alias("max_train_length"),
+		)
+		.rename({"winner": "chaser", "loser": "chased"})
+		.with_columns(pl.col("chaser").cast(pl.String), pl.col("chased").cast(pl.String))
+		.sort("chaser", "chased")
+		.collect(engine="in-memory")
+	)
+
+
+def prep_chasings_daily(
+	store: dict[str, pl.DataFrame],
+	days_range: list[int],
+	phase_type: list[str],
+	positions: list[str] | None = None,
+) -> pl.DataFrame:
+	"""Count daily chasing events per chaser, retaining zero-count days."""
+	position_filter = (
+		pl.lit(True) if positions is None else pl.col("position").cast(pl.String).is_in(positions)
+	)
+	chasers = (
+		store["match_df"]
+		.select(pl.col("winner").cast(pl.String).alias("chaser"))
+		.unique()
+		.sort("chaser")
+		.lazy()
+	)
+	counts = (
+		store["match_df"]
+		.lazy()
+		.filter(
+			pl.col("phase").is_in(phase_type),
+			pl.col("day").is_between(days_range[0], days_range[1]),
+			position_filter,
+		)
+		.with_columns(pl.col("winner").cast(pl.String).alias("chaser"))
+		.group_by("day", "chaser")
+		.len(name="chasing_events")
+		.with_columns(pl.col("day").cast(pl.Int64))
+	)
+	grid = pl.LazyFrame(
+		{"day": range(days_range[0], days_range[1] + 1)},
+		schema={"day": pl.Int64},
+	).join(chasers, how="cross")
+
+	return (
+		grid.join(counts, on=["day", "chaser"], how="left")
+		.fill_null(0)
+		.sort("day", "chaser")
+		.collect(engine="in-memory")
+	)
+
+
+def prep_initiated_vs_received_chasings(
+	store: dict[str, pl.DataFrame],
+	animals: list[str],
+	days_range: list[int],
+	phase_type: list[str],
+	positions: list[str] | None = None,
+) -> pl.DataFrame:
+	"""Summarize chasing events initiated and received by each animal."""
+	chaser_col = "chaser" if "chaser" in store["chasings_df"].columns else "winner"
+	chased_col = "chased" if "chased" in store["chasings_df"].columns else "loser"
+	position_filter = (
+		pl.lit(True) if positions is None else pl.col("position").cast(pl.String).is_in(positions)
+	)
+	df = (
+		store["chasings_df"]
+		.lazy()
+		.filter(
+			pl.col("phase").is_in(phase_type),
+			pl.col("day").is_between(days_range[0], days_range[1]),
+			position_filter,
+		)
+		.with_columns(
+			pl.col(chaser_col).cast(pl.String).alias("chaser"),
+			pl.col(chased_col).cast(pl.String).alias("chased"),
+			pl.col("chasings").cast(pl.Int64),
+		)
+	)
+	initiated = (
+		df.group_by("chaser")
+		.agg(pl.sum("chasings").alias("initiated"))
+		.rename({"chaser": "animal_id"})
+	)
+	received = (
+		df.group_by("chased")
+		.agg(pl.sum("chasings").alias("received"))
+		.rename({"chased": "animal_id"})
+	)
+	animal_grid = pl.LazyFrame({"animal_id": animals}, schema={"animal_id": pl.String})
+
+	return (
+		animal_grid.join(initiated, on="animal_id", how="left")
+		.join(received, on="animal_id", how="left")
+		.fill_null(0)
+		.with_columns(
+			pl.col("initiated").cast(pl.Int64),
+			pl.col("received").cast(pl.Int64),
+		)
+		.with_columns((pl.col("initiated") - pl.col("received")).alias("net_chasing"))
+		.sort("initiated", descending=True)
+		.collect(engine="in-memory")
+	)
+
+
+def prep_animal_speed(
+	store: dict[str, pl.DataFrame],
+	days_range: list[int],
+	phase_type: list[str],
+	tunnel_positions: list[str],
+	tunnel_length_cm: float = 20,
+	max_dwell: float = 10,
+) -> pl.DataFrame:
+	"""Calculate tunnel-crossing speeds from the selected main data."""
+	return (
+		store["main_df"]
+		.lazy()
+		.filter(
+			pl.col("phase").is_in(phase_type),
+			pl.col("day").is_between(days_range[0], days_range[1]),
+			pl.col("position").is_in(tunnel_positions),
+			pl.col("time_spent").is_between(0, max_dwell, closed="right"),
+		)
+		.with_columns(
+			(tunnel_length_cm / pl.col("time_spent")).alias("speed_cm_s"),
+			pl.len().over("animal_id").alias("crossings"),
+		)
+		.sort("animal_id", "speed_cm_s")
+		.collect(engine="in-memory")
+	)
+
+
+def prep_animal_speed_daily(
+	store: dict[str, pl.DataFrame],
+	days_range: list[int],
+	phase_type: list[str],
+	tunnel_positions: list[str],
+	tunnel_length_cm: float = 20,
+	max_dwell: float = 10,
+) -> pl.DataFrame:
+	"""Calculate each animal's mean valid crossing speed per day."""
+	return (
+		prep_animal_speed(
+			store,
+			days_range,
+			phase_type,
+			tunnel_positions,
+			tunnel_length_cm,
+			max_dwell,
+		)
+		.group_by("day", "animal_id")
+		.agg(pl.mean("speed_cm_s").round(2).alias("mean_speed_cm_s"))
+		.sort("day", "animal_id")
+	)
+
+
+def prep_slow_crossings(
+	store: dict[str, pl.DataFrame],
+	days_range: list[int],
+	phase_type: list[str],
+	tunnel_positions: list[str],
+	max_dwell: float = 10,
+) -> pl.DataFrame:
+	"""Summarize crossings longer than the movement-speed cutoff."""
+	return (
+		store["main_df"]
+		.lazy()
+		.filter(
+			pl.col("phase").is_in(phase_type),
+			pl.col("day").is_between(days_range[0], days_range[1]),
+			pl.col("position").is_in(tunnel_positions),
+			pl.col("time_spent") > 0,
+		)
+		.group_by("animal_id")
+		.agg(
+			pl.len().alias("crossings"),
+			(pl.col("time_spent") > max_dwell).sum().alias("slow_crossings"),
+			((pl.col("time_spent") > max_dwell).mean() * 100)
+			.round(2)
+			.alias("slow_percentage"),
+		)
+		.sort("animal_id")
+		.collect(engine="in-memory")
+	)
 
 
 def prep_activity_line(
@@ -748,8 +1002,12 @@ def prep_tube_test_heatmap(
 	days_range: list[int],
 	phase_type: list[str],
 	agg_switch: Literal["mean", "sum"],
+	positions: list[str] | None = None,
 ) -> np.ndarray:
 	"""Pivot tube test-like encounters into a winner-vs-loser matrix for heatmap visualization."""
+	if positions is not None and "position" not in store["tube_test_df"].columns:
+		return np.zeros((len(animals), len(animals)))
+
 	join_df = pl.LazyFrame(
 		(product(animals, animals)),
 		schema=[
@@ -764,6 +1022,10 @@ def prep_tube_test_heatmap(
 		case "mean":
 			agg_func = pl.mean("tube_test").round(2).alias("mean")
 
+	position_filter = pl.lit(True)
+	if positions is not None and "position" in store["tube_test_df"].columns:
+		position_filter = pl.col("position").cast(pl.String).is_in(positions)
+
 	img = (
 		store["tube_test_df"]
 		.lazy()
@@ -771,12 +1033,18 @@ def prep_tube_test_heatmap(
 		.filter(
 			pl.col("phase").is_in(phase_type),
 			pl.col("day").is_between(days_range[0], days_range[1]),
+			position_filter,
+		)
+		.with_columns(
+			pl.col("winner").cast(pl.Enum(animals)),
+			pl.col("loser").cast(pl.Enum(animals)),
 		)
 		.group_by("day", "winner", "loser")
 		.agg(pl.sum("tube_test"))
 		.group_by("winner", "loser", maintain_order=True)
 		.agg(agg_func)
 		.join(join_df, on=["winner", "loser"], how="right")
+		.fill_null(0)
 		.collect(engine="in-memory")
 		.pivot(
 			on="winner",

@@ -1,3 +1,4 @@
+from itertools import product
 from typing import Literal
 
 import networkx as nx
@@ -67,6 +68,73 @@ def plot_activity(
 	return fig
 
 
+def plot_animal_speed(
+	df: pl.DataFrame, animals: list[str], colors: list[str]
+) -> go.Figure:
+	"""Plot the distribution of valid tunnel-crossing speeds per animal."""
+	fig = px.violin(
+		df,
+		x="animal_id",
+		y="speed_cm_s",
+		color="animal_id",
+		color_discrete_map=dict(zip(animals, colors, strict=False)),
+		category_orders={"animal_id": animals},
+		hover_data=["day", "phase", "position", "time_spent", "crossings"],
+		title="<b>Tunnel-crossing speed</b>",
+		points="outliers",
+		box=True,
+	)
+	fig.update_layout(showlegend=False)
+	fig.update_xaxes(title_text="<b>Animal ID</b>")
+	fig.update_yaxes(title_text="<b>Speed [cm/s]</b>")
+
+	return fig
+
+
+def plot_animal_speed_daily(
+	df: pl.DataFrame, animals: list[str], colors: list[str]
+) -> go.Figure:
+	"""Plot mean valid tunnel-crossing speed per animal and day."""
+	fig = px.line(
+		df,
+		x="day",
+		y="mean_speed_cm_s",
+		color="animal_id",
+		markers=True,
+		color_discrete_map=dict(zip(animals, colors, strict=False)),
+		category_orders={"animal_id": animals},
+		title="<b>Mean tunnel-crossing speed over days</b>",
+	)
+	fig.update_layout(legend_title_text="<b>Animal ID</b>")
+	fig.update_xaxes(title_text="<b>Day</b>", dtick=1)
+	fig.update_yaxes(title_text="<b>Mean speed [cm/s]</b>")
+
+	return fig
+
+
+def plot_slow_crossings(
+	df: pl.DataFrame, animals: list[str], colors: list[str]
+) -> go.Figure:
+	"""Plot the percentage of tunnel crossings taking over 10 seconds."""
+	fig = px.bar(
+		df,
+		x="animal_id",
+		y="slow_percentage",
+		color="animal_id",
+		color_discrete_map=dict(zip(animals, colors, strict=False)),
+		category_orders={"animal_id": animals},
+		hover_data=["crossings", "slow_crossings"],
+		text_auto=".1f",
+		title="<b>Slow tunnel crossings (&gt;10 s)</b>",
+	)
+	fig.update_layout(showlegend=False)
+	fig.update_traces(texttemplate="%{y:.1f}%", textposition="outside")
+	fig.update_xaxes(title_text="<b>Animal ID</b>")
+	fig.update_yaxes(title_text="<b>Crossings over 10 s [%]</b>", range=[0, 100])
+
+	return fig
+
+
 def plot_time_alone(
 	df: pl.DataFrame, cages: list[str], colors: list[str], agg_switch: Literal["mean", "sum"]
 ) -> go.Figure:
@@ -117,6 +185,7 @@ def plot_sum_line_per_hour(
 	colors: list[str],
 	input_type: Literal["activity", "chasings"],
 	light_dark: dict[str, float],
+	title_suffix: str | None = None,
 ) -> go.Figure:
 	"""Plots line graph for activity or chasings."""
 	match input_type:
@@ -130,6 +199,8 @@ def plot_sum_line_per_hour(
 			y_axes_label = "<b># of chasing events</b>"
 			color_col = "chaser"
 			legend_title = "<b>Chaser</b>"
+	if title_suffix is not None:
+		title = f"{title}<br><sup>{title_suffix}</sup>"
 
 	fig = px.line(
 		df,
@@ -180,12 +251,146 @@ def plot_sum_line_per_hour(
 	return fig
 
 
+def plot_chasing_trains(df: pl.DataFrame, animals: list[str]) -> go.Figure:
+	"""Plot repeated chasing-train frequency for each ordered animal pair."""
+	grid = (
+		pl.DataFrame(
+			product(animals, animals),
+			schema=[("chased", pl.String), ("chaser", pl.String)],
+			orient="row",
+		)
+		.join(df, on=["chaser", "chased"], how="left")
+		.fill_null(0)
+	)
+	n_animals = len(animals)
+	trains = grid["trains"].to_numpy().reshape(n_animals, n_animals)
+	customdata = np.stack(
+		[
+			grid["events_in_trains"].to_numpy().reshape(n_animals, n_animals),
+			grid["mean_train_length"].to_numpy().reshape(n_animals, n_animals),
+			grid["max_train_length"].to_numpy().reshape(n_animals, n_animals),
+		],
+		axis=-1,
+	)
+
+	fig = go.Figure(
+		go.Heatmap(
+			z=trains,
+			x=animals,
+			y=animals,
+			customdata=customdata,
+			colorscale="Viridis",
+			colorbar={"title": "Trains"},
+			hovertemplate=(
+				"Chaser: %{x}<br>Chased: %{y}<br>Trains: %{z}"
+				"<br>Events in trains: %{customdata[0]}"
+				"<br>Mean events/train: %{customdata[1]:.2f}"
+				"<br>Longest train: %{customdata[2]}<extra></extra>"
+			),
+		)
+	)
+	fig.update_layout(title="<b>Chasing trains (≤10 s pause)</b>")
+	fig.update_xaxes(title="<b>Chaser</b>")
+	fig.update_yaxes(title="<b>Chased</b>", autorange="reversed")
+
+	return fig
+
+
+def plot_chasings_daily(
+	df: pl.DataFrame, animals: list[str], colors: list[str]
+) -> go.Figure:
+	"""Plot total cohort chasing events per day, stacked by chaser."""
+	fig = px.bar(
+		df,
+		x="day",
+		y="chasing_events",
+		color="chaser",
+		color_discrete_map=dict(zip(animals, colors, strict=False)),
+		category_orders={"chaser": animals},
+		title="<b>Total chasing events per day by chaser</b>",
+	)
+	fig.update_traces(marker_line_width=0)
+	fig.update_layout(barcornerradius=10, barmode="stack", legend_title_text="<b>Chaser</b>")
+	fig.update_xaxes(title="<b>Day</b>", dtick=1)
+	fig.update_yaxes(title="<b>Number of chasing events</b>", rangemode="tozero")
+
+	return fig
+
+
+def plot_initiated_vs_received_chasings(
+	df: pl.DataFrame, animals: list[str], colors: list[str]
+) -> go.Figure:
+	"""Plot each animal's initiated versus received chasing events."""
+	color_map = dict(zip(animals, colors, strict=False))
+	maximum = max(df["initiated"].max(), df["received"].max()) or 0
+	axis_max = maximum * 1.08 if maximum > 0 else 1
+
+	fig = go.Figure()
+	for animal in animals:
+		animal_df = df.filter(pl.col("animal_id") == animal)
+		if animal_df.is_empty():
+			continue
+		fig.add_trace(
+			go.Scatter(
+				x=animal_df["initiated"].to_list(),
+				y=animal_df["received"].to_list(),
+				mode="markers",
+				name=animal,
+				text=animal_df["animal_id"].to_list(),
+				customdata=animal_df["net_chasing"].to_list(),
+				marker={
+					"size": 13,
+					"color": color_map.get(animal, colors[0]),
+					"line": {"color": "rgba(255,255,255,0.35)", "width": 1},
+				},
+				hovertemplate=(
+					"Animal: %{text}<br>"
+					"Initiated: %{x:,}<br>"
+					"Received: %{y:,}<br>"
+					"Net chasing: %{customdata:,}<extra></extra>"
+				),
+			)
+		)
+	fig.add_shape(
+		type="line",
+		x0=0,
+		y0=0,
+		x1=axis_max,
+		y1=axis_max,
+		line={"dash": "dash", "color": "rgba(224,230,240,0.55)", "width": 2},
+	)
+	fig.add_annotation(
+		x=axis_max,
+		y=axis_max,
+		text="equal initiated/received",
+		showarrow=False,
+		xanchor="right",
+		yanchor="bottom",
+		font={"size": 11, "color": "rgba(224,230,240,0.75)"},
+	)
+	fig.update_layout(
+		title="<b>Initiated vs received chasing</b>",
+		legend_title_text="<b>Animal ID</b>",
+		margin={"t": 80},
+	)
+	fig.update_xaxes(title="<b>Chasing events initiated</b>", range=[0, axis_max])
+	fig.update_yaxes(
+		title="<b>Chasing events received</b>",
+		range=[0, axis_max],
+		scaleanchor="x",
+		scaleratio=1,
+	)
+
+	return fig
+
+
 def plot_mean_line_per_hour(
 	df: pl.DataFrame,
 	animals: list[str],
 	colors: list[str],
 	input_type: Literal["activity", "chasings"],
 	light_dark: dict[str, float],
+	title_suffix: str | None = None,
 ) -> go.Figure:
 	"""Plots line graph for activity or chasings with SEM shading."""
 	match input_type:
@@ -197,6 +402,8 @@ def plot_mean_line_per_hour(
 			title = "<b>Chasing over time</b>"
 			y_axes_label = "<b># of chasing events</b>"
 			animal_col = "chaser"
+	if title_suffix is not None:
+		title = f"{title}<br><sup>{title_suffix}</sup>"
 
 	fig = go.Figure()
 
@@ -439,19 +646,27 @@ def plot_heatmap(
 	img: np.ndarray,
 	animals: list[str],
 	input_type: Literal["chasings", "tube_test"],
+	title: str | None = None,
+	direction_label: str | None = None,
+	agg_label: str | None = None,
+	train_hover: np.ndarray | None = None,
 ) -> go.Figure:
 	"""Plots heatmap for number of chasings."""
 	match input_type:
 		case "chasings":
-			title = "<b>Chasings</b>"
+			title = title or "<b>Chasings</b>"
 			hover_x = "Chaser: %{x}"
 			hover_y = "Chased: %{y}"
+			value_label = "Chasing events"
 		case "tube_test":
-			title = "<b>Spontaneous tube-test</b>"
+			title = title or "<b>Spontaneous tube-test</b>"
 			hover_x = "Winner: %{x}"
 			hover_y = "Loser: %{y}"
+			value_label = "Tube-test events"
 
-	z_label = "Number: %{z}"
+	agg_label = agg_label or "Value"
+	direction_label = direction_label or "All tunnel directions"
+	z_label = f"{value_label}: %{{z}}"
 
 	fig = px.imshow(
 		img,
@@ -461,13 +676,27 @@ def plot_heatmap(
 		color_continuous_scale="Viridis",
 		title=title,
 	)
+	if train_hover is not None:
+		fig.update_traces(customdata=train_hover)
+		train_lines = [
+			"Chasing trains: %{customdata[0]}",
+			"Events in trains: %{customdata[1]}",
+			"Mean events/train: %{customdata[2]:.2f}",
+			"Longest train: %{customdata[3]}",
+		]
+	else:
+		train_lines = []
 
 	fig.update_traces(
 		hovertemplate="<br>".join(
 			[
 				hover_x,
 				hover_y,
+				f"View: {direction_label}",
+				f"Aggregation: {agg_label}",
 				z_label,
+				*train_lines,
+				"<extra></extra>",
 			]
 		)
 	)

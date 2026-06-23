@@ -1,6 +1,8 @@
 from typing import Literal
 
+import numpy as np
 import plotly.graph_objects as go
+import polars as pl
 
 from deepecohab.core.registries import plot_registry
 from deepecohab.plotting import plot_factory
@@ -115,6 +117,7 @@ def tube_test_heatmap(
 	days_range: list[int],
 	phase_type: list[str],
 	agg_switch: Literal["sum", "mean"],
+	food_cage_direction_switch: Literal["overall", "toward_food", "away_food"],
 ) -> go.Figure:
 	"""Generates a chaser-vs-chased interaction heatmap.
 
@@ -122,9 +125,41 @@ def tube_test_heatmap(
 	individual animals and cells show the sum or mean of chasing events. Columns
 	represent Chasers and rows represent Chased.
 	"""
-	img = auxfun_plots.prep_tube_test_heatmap(store, animals, days_range, phase_type, agg_switch)
+	match food_cage_direction_switch:
+		case "toward_food":
+			positions = ["c2_c1", "c4_c1", "c2_c3", "c4_c3"]
+			title = "<b>Spontaneous tube-test toward food cages</b>"
+			direction_label = "Toward food cages 1 and 3"
+		case "away_food":
+			positions = ["c1_c2", "c3_c2", "c1_c4", "c3_c4"]
+			title = "<b>Spontaneous tube-test away from food cages</b>"
+			direction_label = "Away from food cages 1 and 3"
+		case _:
+			positions = None
+			title = "<b>Spontaneous tube-test</b>"
+			direction_label = "All tunnel directions"
 
-	return plot_factory.plot_heatmap(img, animals, input_type="tube_test")
+	if positions is not None and "position" not in store["tube_test_df"].columns:
+		title = "<b>Spontaneous tube-test direction unavailable</b>"
+		direction_label = "All tunnel directions; cached tube_test_df has no position column"
+
+	img = auxfun_plots.prep_tube_test_heatmap(
+		store,
+		animals,
+		days_range,
+		phase_type,
+		agg_switch,
+		positions=positions,
+	)
+
+	return plot_factory.plot_heatmap(
+		img,
+		animals,
+		input_type="tube_test",
+		title=title,
+		direction_label=direction_label,
+		agg_label=agg_switch.title(),
+	)
 
 
 @plot_registry.register("chasings-heatmap")
@@ -134,6 +169,7 @@ def chasings_heatmap(
 	days_range: list[int],
 	phase_type: list[str],
 	agg_switch: Literal["sum", "mean"],
+	food_cage_direction_switch: Literal["overall", "toward_food", "away_food"],
 ) -> go.Figure:
 	"""Generates a chaser-vs-chased interaction heatmap.
 
@@ -141,9 +177,59 @@ def chasings_heatmap(
 	individual animals and cells show the sum or mean of chasing events. Columns
 	represent Chasers and rows represent Chased.
 	"""
-	img = auxfun_plots.prep_chasings_heatmap(store, animals, days_range, phase_type, agg_switch)
+	match food_cage_direction_switch:
+		case "toward_food":
+			positions = ["c2_c1", "c4_c1", "c2_c3", "c4_c3"]
+			title = "<b>Chasings toward food cages</b>"
+			direction_label = "Toward food cages 1 and 3"
+		case "away_food":
+			positions = ["c1_c2", "c3_c2", "c1_c4", "c3_c4"]
+			title = "<b>Chasings away from food cages</b>"
+			direction_label = "Away from food cages 1 and 3"
+		case _:
+			positions = None
+			title = "<b>Chasings</b>"
+			direction_label = "All tunnel directions"
 
-	return plot_factory.plot_heatmap(img, animals, input_type="chasings")
+	img = auxfun_plots.prep_chasings_heatmap(
+		store,
+		animals,
+		days_range,
+		phase_type,
+		agg_switch,
+		positions=positions,
+	)
+	trains = auxfun_plots.prep_chasing_trains(
+		store, days_range, phase_type, positions=positions
+	)
+	train_grid = (
+		pl.DataFrame(
+			[(chased, chaser) for chased in animals for chaser in animals],
+			schema=[("chased", pl.String), ("chaser", pl.String)],
+			orient="row",
+		)
+		.join(trains, on=["chaser", "chased"], how="left")
+		.fill_null(0)
+	)
+	train_hover = np.stack(
+		[
+			train_grid["trains"].to_numpy().reshape(len(animals), len(animals)),
+			train_grid["events_in_trains"].to_numpy().reshape(len(animals), len(animals)),
+			train_grid["mean_train_length"].to_numpy().reshape(len(animals), len(animals)),
+			train_grid["max_train_length"].to_numpy().reshape(len(animals), len(animals)),
+		],
+		axis=-1,
+	)
+
+	return plot_factory.plot_heatmap(
+		img,
+		animals,
+		input_type="chasings",
+		title=title,
+		direction_label=direction_label,
+		agg_label=agg_switch.title(),
+		train_hover=train_hover,
+	)
 
 
 @plot_registry.register("chasings-line")
@@ -154,23 +240,93 @@ def chasings_line(
 	animal_colors: list[str],
 	agg_switch: Literal["sum", "mean"],
 	light_dark_onset: dict[str, float],
+	food_cage_direction_switch: Literal["overall", "toward_food", "away_food"],
 ) -> go.Figure:
 	"""Generates a line plot of chasing frequency per hour.
 
 	Shows the diurnal rhythm of aggression. For mean includes a shaded area representing
 	the Standard Error of the Mean (SEM) across the selected days.
 	"""
-	df = auxfun_plots.prep_chasings_line(store, animals, days_range)
+	match food_cage_direction_switch:
+		case "toward_food":
+			positions = ["c2_c1", "c4_c1", "c2_c3", "c4_c3"]
+			title_suffix = "Toward food cages 1 and 3"
+		case "away_food":
+			positions = ["c1_c2", "c3_c2", "c1_c4", "c3_c4"]
+			title_suffix = "Away from food cages 1 and 3"
+		case _:
+			positions = None
+			title_suffix = "All tunnel directions"
+
+	df = auxfun_plots.prep_chasings_line(store, animals, days_range, positions=positions)
 
 	match agg_switch:
 		case "sum":
 			return plot_factory.plot_sum_line_per_hour(
-				df, animals, animal_colors, "chasings", light_dark_onset
+				df,
+				animals,
+				animal_colors,
+				"chasings",
+				light_dark_onset,
+				title_suffix=title_suffix,
 			)
 		case "mean":
 			return plot_factory.plot_mean_line_per_hour(
-				df, animals, animal_colors, "chasings", light_dark_onset
+				df,
+				animals,
+				animal_colors,
+				"chasings",
+				light_dark_onset,
+				title_suffix=title_suffix,
 			)
+
+
+@plot_registry.register("chasings-daily")
+def chasings_daily(
+	store: dict,
+	animals: list[str],
+	days_range: list[int],
+	phase_type: list[str],
+	animal_colors: list[str],
+	food_cage_direction_switch: Literal["overall", "toward_food", "away_food"],
+) -> go.Figure:
+	"""Show total cohort chasing events per day, stacked by chaser."""
+	match food_cage_direction_switch:
+		case "toward_food":
+			positions = ["c2_c1", "c4_c1", "c2_c3", "c4_c3"]
+		case "away_food":
+			positions = ["c1_c2", "c3_c2", "c1_c4", "c3_c4"]
+		case _:
+			positions = None
+
+	df = auxfun_plots.prep_chasings_daily(store, days_range, phase_type, positions=positions)
+
+	return plot_factory.plot_chasings_daily(df, animals, animal_colors)
+
+
+@plot_registry.register("initiated-vs-received-chasings")
+def initiated_vs_received_chasings(
+	store: dict,
+	animals: list[str],
+	days_range: list[int],
+	phase_type: list[str],
+	animal_colors: list[str],
+	food_cage_direction_switch: Literal["overall", "toward_food", "away_food"],
+) -> go.Figure:
+	"""Show each animal's chasing events initiated versus received."""
+	match food_cage_direction_switch:
+		case "toward_food":
+			positions = ["c2_c1", "c4_c1", "c2_c3", "c4_c3"]
+		case "away_food":
+			positions = ["c1_c2", "c3_c2", "c1_c4", "c3_c4"]
+		case _:
+			positions = None
+
+	df = auxfun_plots.prep_initiated_vs_received_chasings(
+		store, animals, days_range, phase_type, positions=positions
+	)
+
+	return plot_factory.plot_initiated_vs_received_chasings(df, animals, animal_colors)
 
 
 @plot_registry.register("activity-bar")
@@ -219,6 +375,53 @@ def activity_line(
 			return plot_factory.plot_mean_line_per_hour(
 				df, animals, animal_colors, "activity", light_dark_onset
 			)
+
+
+@plot_registry.register("animal-speed")
+def animal_speed(
+	store: dict,
+	animals: list[str],
+	days_range: list[int],
+	phase_type: list[str],
+	animal_colors: list[str],
+	tunnel_positions: list[str],
+) -> go.Figure:
+	"""Show the distribution of tunnel-crossing speeds per animal."""
+	df = auxfun_plots.prep_animal_speed(store, days_range, phase_type, tunnel_positions)
+
+	return plot_factory.plot_animal_speed(df, animals, animal_colors)
+
+
+@plot_registry.register("animal-speed-daily")
+def animal_speed_daily(
+	store: dict,
+	animals: list[str],
+	days_range: list[int],
+	phase_type: list[str],
+	animal_colors: list[str],
+	tunnel_positions: list[str],
+) -> go.Figure:
+	"""Show mean valid tunnel-crossing speed per day."""
+	df = auxfun_plots.prep_animal_speed_daily(
+		store, days_range, phase_type, tunnel_positions
+	)
+
+	return plot_factory.plot_animal_speed_daily(df, animals, animal_colors)
+
+
+@plot_registry.register("slow-crossings")
+def slow_crossings(
+	store: dict,
+	animals: list[str],
+	days_range: list[int],
+	phase_type: list[str],
+	animal_colors: list[str],
+	tunnel_positions: list[str],
+) -> go.Figure:
+	"""Show the share of tunnel crossings that exceed 10 seconds."""
+	df = auxfun_plots.prep_slow_crossings(store, days_range, phase_type, tunnel_positions)
+
+	return plot_factory.plot_slow_crossings(df, animals, animal_colors)
 
 
 @plot_registry.register("time-per-cage-heatmap")

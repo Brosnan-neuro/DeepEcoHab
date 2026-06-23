@@ -41,7 +41,14 @@ def generate_graphs_layout(days_range: list[int]) -> html.Div:
 						class_name="row-size",
 					),
 					# Ranking, network graph, chasings
-					dbc.Row([dbc.Col(html.H2("Social hierarchy"), className="text-left my-4")]),
+					dbc.Row(
+						[
+							dbc.Col(
+								html.H2("Social hierarchy"),
+								className="text-left my-4",
+							)
+						]
+					),
 					dbc.Row(
 						[
 							dbc.Col(
@@ -96,22 +103,78 @@ def generate_graphs_layout(days_range: list[int]) -> html.Div:
 					dbc.Row(
 						[
 							dbc.Col(
-								dbc.Spinner(
-									auxfun_dashboard.generate_standard_graph("tube-test-heatmap"),
-									color="primary",
+								dcc.RadioItems(
+									id="food_cage_direction_switch",
+									options=[
+										{"label": "Overall", "value": "overall"},
+										{"label": "Toward food", "value": "toward_food"},
+										{"label": "Away from food", "value": "away_food"},
+									],
+									value="overall",
+									className="dash-radio",
 								),
-								width=3,
+								width=4,
+							),
+						],
+						class_name="row-size",
+					),
+					dbc.Row(
+						[
+							dbc.Col(
+								[
+									dbc.Row(
+										[
+											dbc.Col(
+												dbc.Spinner(
+													auxfun_dashboard.generate_standard_graph(
+														"tube-test-heatmap"
+													),
+													color="primary",
+												),
+												width=6,
+											),
+											dbc.Col(
+												dbc.Spinner(
+													auxfun_dashboard.generate_standard_graph(
+														"chasings-heatmap"
+													),
+													color="primary",
+												),
+												width=6,
+											),
+										]
+									),
+								],
+								width=6,
 							),
 							dbc.Col(
 								dbc.Spinner(
-									auxfun_dashboard.generate_standard_graph("chasings-heatmap"),
+									auxfun_dashboard.generate_standard_graph(
+										"chasings-line"
+									),
 									color="primary",
 								),
-								width=3,
+								width=6,
+							),
+						],
+						className="row-size",
+					),
+					dbc.Row(
+						[
+							dbc.Col(
+								dbc.Spinner(
+									auxfun_dashboard.generate_standard_graph(
+										"initiated-vs-received-chasings", css_class="plot-500"
+									),
+									color="primary",
+								),
+								width=6,
 							),
 							dbc.Col(
 								dbc.Spinner(
-									auxfun_dashboard.generate_standard_graph("chasings-line"),
+									auxfun_dashboard.generate_standard_graph(
+										"chasings-daily", css_class="plot-500"
+									),
 									color="primary",
 								),
 								width=6,
@@ -140,6 +203,43 @@ def generate_graphs_layout(days_range: list[int]) -> html.Div:
 									color="primary",
 								),
 								width=4,
+							),
+						],
+						className="row-size",
+					),
+					dbc.Row(
+						[
+							dbc.Col(
+								dbc.Spinner(
+									auxfun_dashboard.generate_standard_graph(
+										"animal-speed", css_class="plot-400"
+									),
+									color="primary",
+								),
+								width=6,
+							),
+							dbc.Col(
+								dbc.Spinner(
+									auxfun_dashboard.generate_standard_graph(
+										"slow-crossings", css_class="plot-400"
+									),
+									color="primary",
+								),
+								width=6,
+							),
+						],
+						className="row-size",
+					),
+					dbc.Row(
+						[
+							dbc.Col(
+								dbc.Spinner(
+									auxfun_dashboard.generate_standard_graph(
+										"animal-speed-daily", css_class="plot-400"
+									),
+									color="primary",
+								),
+								width=12,
 							),
 						],
 						className="row-size",

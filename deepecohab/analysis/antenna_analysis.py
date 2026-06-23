@@ -377,6 +377,7 @@ def calculate_tube_test(
 	tunnels: list[str] = auxfun.get_positions(cfg, "tunnels")
 
 	lf = auxfun.update_repeat_antenna_position(lf)
+	lf = lf.with_columns(pl.col("position").alias("directional_position"))
 	lf = auxfun.remove_tunnel_directionality(lf, cfg)
 	lf = lf.with_columns(
 		(pl.col("datetime") - pl.duration(seconds=pl.col("time_spent"))).alias("tunnel_entry"),
@@ -427,14 +428,35 @@ def calculate_tube_test(
 			intermediate = intermediate.filter(chase | guard)
 
 	tube_test = (
-		intermediate.group_by(
-			["phase", "day", "phase_count", "hour", "animal_id", "animal_id_winner"]
+		intermediate.rename({"directional_position_winner": "winner_direction"})
+		.group_by(
+			[
+				"phase",
+				"day",
+				"phase_count",
+				"hour",
+				"winner_direction",
+				"animal_id",
+				"animal_id_winner",
+			]
 		)
 		.len(name="tube_test")
-		.rename({"animal_id": "loser", "animal_id_winner": "winner"})
+		.rename(
+			{
+				"animal_id": "loser",
+				"animal_id_winner": "winner",
+				"winner_direction": "position",
+			}
+		)
 	)
 
-	return auxfun.reindex_onto_grid(tube_test, cfg, ("winner", "loser"), ordered=True)
+	return auxfun.reindex_onto_grid(
+		tube_test,
+		cfg,
+		("winner", "loser"),
+		ordered=True,
+		positions=auxfun.get_positions(cfg, "tunnels_directional"),
+	)
 
 
 @df_registry.register_step("pairwise_meetings", requires=["padded_df"])

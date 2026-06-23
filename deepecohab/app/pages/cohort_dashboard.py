@@ -90,6 +90,7 @@ def render_graphs_layout(cfg: dict[str, Any]) -> tuple[html.Div, html.Div]:
 		Input("pairwise_switch", "value"),
 		Input("sociability_switch", "value"),
 		Input("ranking_switch", "value"),
+		Input("food_cage_direction_switch", "value"),
 		Input("slider_switch", "value"),
 	],
 	State("project-config-store", "data"),
@@ -103,6 +104,7 @@ def update_plots(
 	pair_switch: Literal["time_together", "pairwise_encounters"],
 	sociability_switch: Literal["proportion_together", "sociability"],
 	ranking_switch: Literal["intime", "stability"],
+	food_cage_direction_switch: Literal["overall", "toward_food", "away_food"],
 	slider_mode: Literal["days_single", "days_range"],
 	cfg: dict[str, Any],
 ) -> go.Figure:
@@ -166,11 +168,13 @@ def update_plots(
 		pairwise_switch=pair_switch,
 		sociability_switch=sociability_switch,
 		ranking_switch=ranking_switch,
+		food_cage_direction_switch=food_cage_direction_switch,
 		animals=animals,
 		animal_colors=animal_colors,
 		cages=cages,
 		positions=positions,
 		position_colors=positions_colors,
+		tunnel_positions=list(cfg["tunnels"]),
 		light_dark_onset=light_dark_onset,
 	)
 
@@ -226,11 +230,13 @@ def update_comparison_plot(
 		pairwise_switch=input_dict["pairwise_switch"],
 		sociability_switch=input_dict["sociability_switch"],
 		ranking_switch=input_dict["ranking_switch"],
+		food_cage_direction_switch="overall",
 		animals=animals,
 		animal_colors=animal_colors,
 		cages=cages,
 		positions=positions,
 		position_colors=positions_colors,
+		tunnel_positions=list(cfg["tunnels"]),
 		light_dark_onset=light_dark_onset,
 	)
 
