@@ -1,0 +1,538 @@
+DeepEcoHAB MAIN MENU - PC PREPARATION HELP
+==========================================
+Last updated for the notebook-based DeepEcoHAB Main Menu package with four tools:
+
+1. DeepEcoHAB RFID DAQ - new/current board acquisition GUI with camera support.
+2. Old RFID DAQ - legacy/old RFID board acquisition GUI.
+3. DeepEcoHAB / EcoHAB RFID dataframe reformatter - converts output files for downstream analysis.
+4. Hardware Trigger - Arduino-based scheduled TTL pulse generator.
+
+This help file is written for a routine PC user. You do not need to understand programming, but you do need to use the correct Python environment in VS Code/Jupyter.
+
+The current launcher is a Jupyter Notebook launcher. It avoids Windows BAT/PATH problems by using the Python kernel that you select inside VS Code.
+
+
+OFFICIAL DOWNLOAD LINKS
+-----------------------
+Use official sources whenever possible.
+
+1. Anaconda Distribution
+   https://www.anaconda.com/download/
+
+2. Visual Studio Code
+   https://code.visualstudio.com/download
+
+3. VS Code Python extension
+   https://marketplace.visualstudio.com/items?itemName=ms-python.python
+
+4. VS Code Jupyter extension
+   https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter
+
+5. Teledyne FLIR / Spinnaker SDK
+   https://www.teledynevisionsolutions.com/products/spinnaker-sdk/
+
+6. Teledyne guide: installing PySpin for Spinnaker SDK
+   https://www.teledynevisionsolutions.com/support/support-center/technical-guidance/iis/installing-pyspin-for-the-spinnaker-sdk/
+
+7. FFmpeg official download page
+   https://ffmpeg.org/download.html
+
+8. Arduino IDE
+   https://www.arduino.cc/en/software
+   Arduino help page:
+   https://support.arduino.cc/hc/en-us/articles/360019833020-Download-and-install-Arduino-IDE
+
+9. NVIDIA driver download page, only needed if using NVIDIA/NVENC GPU encoding
+   https://www.nvidia.com/Download/index.aspx
+
+
+WHAT EACH TOOL NEEDS
+--------------------
+The tools share some requirements, but not all tools need the camera or FFmpeg.
+
+A. Main Menu Launcher
+   Needs:
+   - Visual Studio Code
+   - Python/Jupyter environment
+   - PySide6
+
+B. DeepEcoHAB RFID DAQ - new/current board
+   Needs:
+   - All Main Menu requirements
+   - PySide6
+   - numpy
+   - pandas
+   - openpyxl
+   - pyserial
+   - opencv / cv2
+   - FFmpeg for video saving
+   - Spinnaker SDK + PySpin for FLIR/Teledyne Blackfly camera use
+   - NVIDIA drivers if using NVENC encoding
+
+C. Old RFID DAQ
+   Needs:
+   - All Main Menu requirements
+   - PySide6
+   - pandas / openpyxl if exporting or reviewing tables
+   - pyserial
+   It does NOT need Spinnaker, FFmpeg, camera settings, environmental control, or hardware trigger.
+
+D. Dataframe reformatter
+   Needs:
+   - All Main Menu requirements
+   - pandas
+   - openpyxl
+   It does NOT need Spinnaker or FFmpeg.
+
+E. Hardware Trigger
+   Needs:
+   - All Main Menu requirements
+   - pyserial
+   - Arduino IDE only if you need to upload/re-upload firmware to the Arduino.
+
+
+FOLDER STRUCTURE
+----------------
+After unzipping the package, keep the structure unchanged.
+
+DeepEcoHAB_Main_Menu_Notebook_Package/
+    Main_menu_GUI_launcher.ipynb
+    README.txt
+    DeepEcoHAB_dependencies/
+        main_menu_config.json
+        notebooks/
+            new_board_gui_v14.ipynb
+            old_board_gui.ipynb
+            data_reformatting_gui.ipynb
+            ttl_scheduler_gui_timefix.ipynb
+        assets/
+            app_logo.jpg
+            new_board.jpg
+            old_board.jpg
+            reformatting.jpg
+            hardware_trigger.jpg
+        docs/
+            PC_preparation_HELP.txt
+        logs/
+        _launcher_cache/
+
+You can move the whole package folder to another PC or another disk, but keep Main_menu_GUI_launcher.ipynb next to the DeepEcoHAB_dependencies folder.
+
+Do NOT move only the notebook by itself. The Main Menu needs the dependencies folder next to it.
+
+
+STEP 1 - INSTALL ANACONDA
+-------------------------
+If a working Anaconda/Python environment already exists, you can skip this step.
+
+1. Go to:
+   https://www.anaconda.com/download/
+
+2. Download Anaconda Distribution for Windows.
+
+3. Install it normally.
+
+4. During installation, it is okay if Python is NOT added to PATH. The notebook launcher does not rely on Windows PATH.
+
+5. After installation, you should have Anaconda Prompt in the Windows Start menu.
+
+
+STEP 2 - INSTALL VISUAL STUDIO CODE
+-----------------------------------
+1. Go to:
+   https://code.visualstudio.com/download
+
+2. Download Visual Studio Code for Windows.
+
+3. Install it normally.
+
+4. Open VS Code.
+
+5. Open the Extensions panel on the left side.
+
+6. Install these two Microsoft extensions:
+   - Python
+   - Jupyter
+
+Direct extension pages:
+- Python:  https://marketplace.visualstudio.com/items?itemName=ms-python.python
+- Jupyter: https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter
+
+
+STEP 3 - CREATE OR SELECT A PYTHON ENVIRONMENT
+----------------------------------------------
+If you already have a working DeepEcoHAB environment, use it. That is usually best.
+
+If you need to create a fresh environment, open Anaconda Prompt and run:
+
+conda create -n deepecohab -c conda-forge python=3.11 pyside6 pyserial numpy pandas openpyxl opencv ipykernel jupyter -y
+
+Then activate it:
+
+conda activate deepecohab
+
+Then test PySide6:
+
+python -c "from PySide6.QtCore import Qt; print('PySide6 works')"
+
+If this prints "PySide6 works", the graphical tools should be able to open.
+
+If conda is very slow at "Solving environment", you can try:
+
+conda config --set solver libmamba
+
+Then repeat the environment creation command.
+
+IMPORTANT:
+Do not use a random Python environment. In VS Code, select the environment that contains the packages needed by the tools you want to run.
+
+
+STEP 4 - INSTALL CAMERA SUPPORT, ONLY FOR THE NEW RFID DAQ TOOL
+---------------------------------------------------------------
+Skip this step if you only use:
+- Old RFID DAQ
+- Dataframe reformatter
+- Hardware Trigger
+
+For the new/current RFID DAQ with FLIR/Teledyne Blackfly camera:
+
+1. Download and install Spinnaker SDK:
+   https://www.teledynevisionsolutions.com/products/spinnaker-sdk/
+
+2. Install the full Spinnaker SDK unless instructed otherwise by your lab.
+
+3. After installation, open SpinView.
+
+4. Connect the camera.
+
+5. Confirm that SpinView sees the camera.
+
+6. Confirm that the camera works in SpinView before troubleshooting the DeepEcoHAB GUI.
+
+7. Install/configure PySpin for the same Python environment used by VS Code/Jupyter.
+   Teledyne PySpin guide:
+   https://www.teledynevisionsolutions.com/support/support-center/technical-guidance/iis/installing-pyspin-for-the-spinnaker-sdk/
+
+8. In the DeepEcoHAB Python environment, test PySpin if possible:
+
+python -c "import PySpin; print('PySpin works')"
+
+If this fails, the new-board camera GUI will not be able to use the FLIR camera, even if the rest of the GUI opens.
+
+
+STEP 5 - INSTALL FFMPEG, ONLY FOR VIDEO RECORDING
+-------------------------------------------------
+Skip this step if you do not record camera video.
+
+The new/current RFID DAQ GUI uses FFmpeg for video saving.
+
+1. Go to the official FFmpeg download page:
+   https://ffmpeg.org/download.html
+
+2. Download a Windows build from a source linked by the official FFmpeg page.
+
+3. Extract FFmpeg somewhere stable, for example:
+   C:\ffmpeg\
+
+4. Make sure ffmpeg.exe is available, for example:
+   C:\ffmpeg\bin\ffmpeg.exe
+
+5. If your GUI has a direct FFmpeg path setting, point it to ffmpeg.exe.
+
+6. If your GUI expects FFmpeg in PATH, add C:\ffmpeg\bin to Windows PATH.
+
+If using NVIDIA NVENC encoding, install current NVIDIA drivers:
+https://www.nvidia.com/Download/index.aspx
+
+IMPORTANT FOR LONG RECORDINGS:
+The DeepEcoHAB new-board GUI has been adjusted to be more robust, but GPU/NVENC encoding can still fail during very long recordings. Watch the FFmpeg log and camera status if running multi-day experiments.
+
+
+STEP 6 - INSTALL ARDUINO IDE, ONLY IF YOU NEED TO UPLOAD FIRMWARE
+-----------------------------------------------------------------
+The normal user does not need Arduino IDE just to run an already-programmed Arduino.
+
+Install Arduino IDE only if you need to upload or update Arduino firmware for:
+- Hardware Trigger
+- Environmental control unit
+- Camera TTL pulse generation
+
+Official Arduino software page:
+https://www.arduino.cc/en/software
+
+Arduino help page:
+https://support.arduino.cc/hc/en-us/articles/360019833020-Download-and-install-Arduino-IDE
+
+
+STEP 7 - OPEN THE PACKAGE IN VS CODE
+------------------------------------
+1. Start VS Code.
+
+2. Click:
+   File > Open Folder
+
+3. Select the full package folder, for example:
+   DeepEcoHAB_Main_Menu_Notebook_Package
+
+4. In the file explorer on the left, open:
+   Main_menu_GUI_launcher.ipynb
+
+
+STEP 8 - SELECT THE CORRECT NOTEBOOK KERNEL
+-------------------------------------------
+This is extremely important.
+
+At the top right of the notebook window, VS Code shows the selected kernel.
+
+1. Click the kernel name.
+
+2. Choose your working DeepEcoHAB environment.
+
+3. If you are unsure which environment is correct, ask yourself:
+   - Did this environment run the new-board GUI before?
+   - Does this environment have PySide6?
+   - If using the camera, does this environment have PySpin?
+
+4. You can test the selected kernel by running this in a notebook cell:
+
+import sys
+print(sys.executable)
+from PySide6.QtCore import Qt
+print('PySide6 works')
+
+For the new-board camera GUI, also test:
+
+import PySpin
+print('PySpin works')
+
+The launcher uses sys.executable from this selected kernel. That means all launched tools use the same environment.
+
+
+STEP 9 - RUN THE MAIN MENU NOTEBOOK
+-----------------------------------
+Run the cells in order.
+
+Cell 1 contains:
+
+%gui qt
+
+This is important. It tells Jupyter/VS Code to cooperate with the Qt/PySide6 event loop.
+
+Then run the main launcher cell. The DeepEcoHAB Main Menu window should appear.
+
+
+STEP 10 - START A TOOL FROM THE MAIN MENU
+-----------------------------------------
+The menu currently contains four tools:
+
+1. DeepEcoHAB RFID DAQ
+   Use this for the current/new RFID DAQ board and FLIR camera acquisition.
+
+2. Old RFID DAQ
+   Use this for the older RFID DAQ board. It has no camera, no TTL channels, no environmental control, and no hardware trigger section.
+
+3. DeepEcoHAB / EcoHAB RFID dataframe reformatter
+   Use this to convert old-board and new-board output files into downstream-analysis-readable files.
+
+4. Hardware Trigger
+   Use this to run the standalone Arduino TTL scheduler / hardware trigger GUI.
+
+When you click a button, the launcher:
+
+1. Reads main_menu_config.json.
+2. Finds the selected notebook.
+3. Converts it to a temporary .py file in:
+   DeepEcoHAB_dependencies/_launcher_cache/
+4. Launches that temporary file using the same Python executable as the selected Jupyter kernel.
+
+
+STEP 11 - WHERE LOGS ARE SAVED
+------------------------------
+Launcher logs are saved here:
+
+DeepEcoHAB_dependencies/logs/
+
+If a tool does not open, check:
+
+main_menu_launcher.log
+
+Some individual tools also generate their own diagnostic logs in their selected output folders.
+
+
+STEP 12 - HOW TO CHANGE BUTTON NAMES, IMAGES, OR SCRIPTS
+---------------------------------------------------------
+Open:
+
+DeepEcoHAB_dependencies/main_menu_config.json
+
+Each button/tool is described there.
+
+Example structure:
+
+{
+  "id": "new_board",
+  "title": "DeepEcoHAB RFID DAQ",
+  "description": "Start the current/new RFID DAQ + FLIR camera acquisition GUI.",
+  "target": "notebooks/new_board_gui_v14.ipynb",
+  "image": "assets/new_board.jpg",
+  "enabled": true
+}
+
+To change the image:
+1. Replace the file inside assets/, or
+2. Edit the "image" path in main_menu_config.json.
+
+Recommended fixed names:
+- assets/new_board.jpg
+- assets/old_board.jpg
+- assets/reformatting.jpg
+- assets/hardware_trigger.jpg
+
+If an image shows "No image", check:
+1. Is the file inside DeepEcoHAB_dependencies/assets/?
+2. Does the filename match exactly?
+3. Is .jpg vs .jpeg different?
+4. Is the path in main_menu_config.json correct?
+
+To change which notebook opens:
+1. Put the notebook inside DeepEcoHAB_dependencies/notebooks/.
+2. Edit the "target" path in main_menu_config.json.
+
+
+COMMON PROBLEMS AND SOLUTIONS
+-----------------------------
+
+Problem: The Main Menu window does not appear.
+Possible causes:
+- Wrong VS Code/Jupyter kernel selected.
+- PySide6 missing from the selected environment.
+- The first notebook cell with %gui qt was not run.
+
+Try this in a notebook cell:
+from PySide6.QtCore import Qt
+print('PySide6 works')
+
+
+Problem: A tool does not start after clicking its button.
+Possible causes:
+- The target notebook path in main_menu_config.json is wrong.
+- The required package is missing.
+- The tool crashed during startup.
+
+Check:
+DeepEcoHAB_dependencies/logs/main_menu_launcher.log
+
+
+Problem: Image says "No image".
+Possible causes:
+- Wrong filename.
+- Wrong folder.
+- .jpg vs .jpeg mismatch.
+
+Fix:
+Make sure the image path in main_menu_config.json exactly matches the file inside assets/.
+
+
+Problem: FLIR camera is not detected.
+Possible causes:
+- Spinnaker SDK not installed.
+- PySpin not installed/configured in the selected Python environment.
+- Camera is open in another program.
+- USB cable/controller issue.
+
+Steps:
+1. Close the DeepEcoHAB GUI.
+2. Close SpinView if open.
+3. Reconnect the camera.
+4. Open SpinView and confirm the camera works.
+5. Close SpinView.
+6. Try the DeepEcoHAB new-board GUI again.
+
+
+Problem: Camera records without TTL or does not wait for trigger.
+Check camera settings:
+- Trigger Mode: On
+- Trigger Selector: Frame Start
+- Trigger Source: Line0
+- Trigger Activation: Rising Edge
+
+In the new-board GUI, keep "Force external camera trigger" enabled unless you specifically want free-run testing.
+
+
+Problem: FFmpeg or video saving fails.
+Possible causes:
+- FFmpeg path not found.
+- NVIDIA driver issue when using NVENC.
+- Disk full or disk sleeping.
+- Very long recording caused encoder failure.
+
+Steps:
+1. Check the output folder.
+2. Check the FFmpeg log created by the new-board GUI.
+3. Confirm there is enough free disk space.
+4. If using NVENC, update NVIDIA drivers.
+5. If still unstable, consider testing a non-NVENC encoder mode.
+
+
+Problem: Hardware Trigger GUI opens but Arduino is not found.
+Possible causes:
+- Wrong COM port selected.
+- Arduino not connected.
+- Another program is using the COM port.
+- Firmware not uploaded.
+
+Steps:
+1. Unplug/replug Arduino.
+2. Check Device Manager > Ports (COM & LPT).
+3. Select the correct COM port in the GUI.
+4. If needed, upload firmware using Arduino IDE.
+
+
+Problem: Old RFID DAQ receives board LED activity but no GUI data.
+Possible causes:
+- Wrong COM port.
+- Wrong baud rate.
+- Board sends a format not recognized by the parser.
+- Another program has the port open.
+
+Steps:
+1. Select the correct COM port.
+2. Confirm baud rate expected by the old board.
+3. Start acquisition.
+4. Check the raw/unparsed diagnostic logs if available.
+
+
+Problem: Dataframe reformatter output boxes are hard to read.
+Solution:
+Resize the reformatter window. The current layout uses dynamic text boxes, but very small screens can still require maximizing the window.
+
+
+SAFE OPERATING PRACTICE FOR RECORDINGS
+--------------------------------------
+Before a real experiment:
+
+1. Restart the PC if it has been running for a long time.
+2. Connect RFID DAQ, Arduino devices, and camera.
+3. Open SpinView and confirm the camera works, then close SpinView.
+4. Open the Main Menu from VS Code/Jupyter.
+5. Start the required tool.
+6. Run a short 1-2 minute test recording.
+7. Confirm that files appear in the output folder.
+8. Confirm that RFID/tag data are written.
+9. Confirm that video files are created if camera recording is used.
+10. Only then start the long experiment.
+
+During very long recordings:
+- Do not let the PC sleep.
+- Disable automatic restarts/Windows updates during the experiment.
+- Use stable power.
+- Use enough disk space.
+- Avoid opening SpinView while the DeepEcoHAB GUI is using the camera.
+- Avoid unplugging USB devices.
+
+
+FINAL NOTE
+----------
+This notebook-based launcher is the flexible development-lab version. It is designed to be easy to edit and easy to move between PCs that already have VS Code/Jupyter working.
+
+It is not yet the final installer-like product. A future professional version can be packaged as a normal installed Windows program, but the notebook launcher is currently the fastest and most flexible approach.

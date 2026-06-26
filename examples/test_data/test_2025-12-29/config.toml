@@ -1,0 +1,67 @@
+project_location = "C:\\Repositories\\DeepEcoHab\\examples\\test_data\\test_2025-12-29"
+experiment_name = "test"
+data_path = "C:\\Repositories\\DeepEcoHab\\examples\\test_data"
+animal_ids = [ "0627A81904", "325CE61A04", "352DE61A04", "7376E61A04", "75DFFF1904", "85EDFF1904", "956BA81904", "9A44E61A04", "A4939C1A04",]
+dropped_ids = []
+cages = [ "cage_1", "cage_2", "cage_3", "cage_4",]
+days_range = [ 1, 6,]
+
+[phase]
+light_phase = "00:00:00"
+dark_phase = "12:00:00"
+
+[experiment_timeline]
+start_date = "2023-05-24 12:59:09.172000+02:00"
+finish_date = "2023-05-29 23:58:04.470000+02:00"
+
+[antenna_combinations]
+1_2 = "c1_c2"
+2_1 = "c2_c1"
+3_4 = "c2_c3"
+4_3 = "c3_c2"
+5_6 = "c3_c4"
+6_5 = "c4_c3"
+7_8 = "c4_c1"
+8_7 = "c1_c4"
+1_8 = "cage_1"
+8_1 = "cage_1"
+1_1 = "cage_1"
+8_8 = "cage_1"
+8_2 = "cage_1"
+2_8 = "cage_1"
+1_7 = "cage_1"
+7_1 = "cage_1"
+2_3 = "cage_2"
+3_2 = "cage_2"
+2_2 = "cage_2"
+3_3 = "cage_2"
+2_4 = "cage_2"
+4_2 = "cage_2"
+3_1 = "cage_2"
+1_3 = "cage_2"
+4_5 = "cage_3"
+5_4 = "cage_3"
+4_4 = "cage_3"
+5_5 = "cage_3"
+4_6 = "cage_3"
+6_4 = "cage_3"
+3_5 = "cage_3"
+5_3 = "cage_3"
+6_7 = "cage_4"
+7_6 = "cage_4"
+6_6 = "cage_4"
+7_7 = "cage_4"
+5_7 = "cage_4"
+7_5 = "cage_4"
+6_8 = "cage_4"
+8_6 = "cage_4"
+
+[tunnels]
+c1_c2 = "tunnel_1"
+c2_c1 = "tunnel_1"
+c2_c3 = "tunnel_2"
+c3_c2 = "tunnel_2"
+c3_c4 = "tunnel_3"
+c4_c3 = "tunnel_3"
+c4_c1 = "tunnel_4"
+c1_c4 = "tunnel_4"

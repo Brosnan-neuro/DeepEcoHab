@@ -1,0 +1,47 @@
+{
+  "app_title": "DeepEcoHAB Main Menu",
+  "app_subtitle": "Recording and data-preparation suite",
+  "dependencies_folder_name": "DeepEcoHAB_dependencies",
+  "contact_text": "Prepared by: Dr. Marcin Lipiec\nContact: m.lipiec@nencki.edu.pl",
+  "help_file": "docs/PC_preparation_HELP.txt",
+  "theme": {
+    "accent": "#2dd4bf",
+    "background": "#0f1115",
+    "card": "#151a23",
+    "text": "#e8eef6"
+  },
+  "tools": [
+    {
+      "id": "new_board",
+      "title": "DeepEcoHAB RFID DAQ",
+      "description": "Start the new RFID DAQ + FLIR camera acquisition GUI.",
+      "target": "notebooks/new_board_gui_v14.ipynb",
+      "image": "assets/new_board.jpg",
+      "enabled": true
+    },
+    {
+      "id": "old_board",
+      "title": "Old RFID DAQ + new firmware",
+      "description": "Start the legacy old-board RFID acquisition GUI (8 RFID antennas, no camera/TTL/env control). Requires new board firmware!",
+      "target": "notebooks/old_board_gui.ipynb",
+      "image": "assets/old_board.jpg",
+      "enabled": true
+    },
+    {
+      "id": "reformatting",
+      "title": "DeepEcoHAB / EcoHAB RFID dataframe reformatter",
+      "description": "Convert old/new board outputs into files readable by new analysis Dashboard.",
+      "target": "notebooks/data_reformatting_gui.ipynb",
+      "image": "assets/reformatting.jpg",
+      "enabled": true
+    },
+    {
+      "id": "hardware_trigger",
+      "title": "Hardware Trigger",
+      "description": "Open the standalone TTL hardware-trigger scheduler / pulse generator to trigger external devices.",
+      "target": "notebooks/ttl_scheduler_gui_timefix.ipynb",
+      "image": "assets/hardware_trigger.jpg",
+      "enabled": true
+    }
+  ]
+}

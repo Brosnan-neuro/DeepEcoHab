@@ -1,0 +1,7 @@
+section,key,value,row_index,mouse_line,genotype,number,sex,date_of_birth,tag_no
+experiment,name,old_board_experiment,,,,,,,
+experiment,updated,2026-05-28T09:42:26.196149,,,,,,,
+experiment,start_datetime,2026-05-28T09:42:26.195102,,,,,,,
+experiment,recording_timezone,Europe/Warsaw,,,,,,,
+experiment,board_type,old_rfid_board,,,,,,,
+animals,n_mice,0,,,,,,,
