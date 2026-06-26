@@ -1,0 +1,8 @@
+ .../app/page_layouts/cohort_dashboard_layout.py    |  51 [32m++++++++[m
+ deepecohab/app/pages/cohort_dashboard.py           |   2 [32m+[m
+ deepecohab/plotting/plot_catalog.py                |  60 [32m++++++++++[m
+ deepecohab/plotting/plot_factory.py                | 115 [32m++++++++++++++++++[m
+ deepecohab/utils/auxfun_plots.py                   | 129 [32m+++++++++++++++++++++[m
+ tests/test_animal_speed.py                         | 101 [32m++++++++++++++++[m
+ tests/test_chasing_trains.py                       |  43 [32m+++++++[m
+ 7 files changed, 501 insertions(+)
