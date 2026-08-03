@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, cast
 
 import networkx as nx
 import numpy as np
@@ -494,8 +494,13 @@ def time_spent_per_cage(
 			x_title = label
 			z = "Time [h]: %{z}"
 			if x_col in df.columns:
-				# Compute inclusive range; cast to int for Plotly's bin count.
-				nbins = int(df[x_col].max() - df[x_col].min() + 1)  # type: ignore[unsupported-operator]
+				# Convert scalars before subtracting so the type checker sees native integers.
+				try:
+					max_val = int(cast(int, df[x_col].max()))
+					min_val = int(cast(int, df[x_col].min()))
+					nbins = max_val - min_val + 1
+				except Exception:
+					nbins = int(df["day"].n_unique())
 			else:
 				# Fall back to the unique count of the day column.
 				nbins = int(df["day"].n_unique())
