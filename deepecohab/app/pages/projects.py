@@ -1,5 +1,7 @@
 import base64
 import io
+import json
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -24,6 +26,7 @@ from dash import (
 	set_props,
 )
 from dash.exceptions import PreventUpdate
+from pydantic import ValidationError
 
 from deepecohab import AnalysisParams, Project, Recording
 from deepecohab.app import components, services
@@ -78,6 +81,8 @@ layout = html.Div(
 		dcc.Store(id="run-failed", data={}),
 		dcc.Store(id="data-changed"),
 		dcc.Store(id="upload-target"),
+		dcc.Store(id="replace-pending"),
+		dcc.Store(id="replace-queue"),
 		dcc.Store(id="remove-target"),
 		# Real clicks on the table's row buttons, via deh.clickEvent: the table is rebuilt on
 		# every search or data change, which would otherwise fire their callbacks each time.
@@ -85,7 +90,8 @@ layout = html.Div(
 		dcc.Store(id="generate-table-event"),
 		dcc.Store(id="add-recordings-event"),
 		dcc.Store(id="remove-recording-event"),
-		dcc.Store(id="reinstate-recording-event"),
+		dcc.Store(id="remove-recordings-event"),
+		dcc.Store(id="reinstate-recordings-event"),
 		html.Div(
 			[
 				html.Div([html.H2("Projects"), html.P(id="project-count")], className="deh-titles"),
@@ -370,7 +376,7 @@ layout = html.Div(
 										html.Code("<name>.config.json"),
 										" beside its ",
 										html.Code("<name>.data.parquet"),
-										" and, optionally, ",
+										" and ",
 										html.Code("<name>.diagnostic.json"),
 										". Files are copied into the project under the name "
 										"the config carries.",
@@ -384,6 +390,33 @@ layout = html.Div(
 				),
 				html.Div(
 					html.Button("Close", id="upload-close", className="deh-btn"),
+					className="deh-dialog-foot",
+				),
+			],
+		),
+		dmc.Modal(
+			id="replace-modal",
+			title="Replace recording?",
+			size=520,
+			closeOnClickOutside=False,
+			closeOnEscape=False,
+			withCloseButton=False,
+			classNames=components.DIALOG_CLASSES,
+			children=[
+				html.Div(
+					[
+						html.P(id="replace-text"),
+						dmc.Checkbox(id="replace-all", size="xs", radius="xs"),
+					],
+					className="deh-dialog-body",
+				),
+				html.Div(
+					[
+						html.Button("Skip", id="replace-skip", className="deh-btn deh-btn-ghost"),
+						html.Button(
+							"Replace", id="replace-confirm", className="deh-btn deh-btn-danger"
+						),
+					],
 					className="deh-dialog-foot",
 				),
 			],
@@ -438,6 +471,31 @@ def _badge(kind: str, icon_name: str, *content, spin: bool = False, title: str =
 	)
 
 
+def _table_cell(project: dict) -> html.Span | html.Div:
+	rows = project["table_rows"]
+	if rows is None:
+		return _badge("neutral", "circle-dashed", "Not generated")
+	if not project["table_stale"]:
+		return _badge("neutral", "database", f"{rows:,} rows")
+	return html.Div(
+		[
+			_badge(
+				"warn",
+				"alert-triangle",
+				f"{rows:,} rows · regenerate",
+				title="Recordings or results changed since the project table was built",
+			),
+			html.Button(
+				icon("refresh", size=15),
+				id={"type": "generate-table", "place": "cell", "index": project["location"]},
+				className="deh-icon-btn sm",
+				title="Regenerate the project table",
+			),
+		],
+		className="deh-table-cell",
+	)
+
+
 def _running_badge(running: list) -> html.Span:
 	steps, total, building = running
 	building = html.Span(building or "done", className="deh-mono")
@@ -486,7 +544,7 @@ def _project_menu(project: dict) -> dmc.Menu:
 					dmc.MenuItem(
 						"Generate project table",
 						leftSection=icon("database", size=16),
-						id={"type": "generate-table", "index": location},
+						id={"type": "generate-table", "place": "menu", "index": location},
 						disabled=not loadable,
 					),
 					*(
@@ -526,29 +584,51 @@ def _project_menu(project: dict) -> dmc.Menu:
 	)
 
 
-def _reinstate_menu(project: dict) -> dmc.Menu:
+def _reinstate_menu(project: dict) -> dmc.Popover:
 	location, delisted = project["location"], project["delisted"]
-	return dmc.Menu(
+	return dmc.Popover(
 		[
-			dmc.MenuTarget(
+			dmc.PopoverTarget(
 				html.Button(
 					[icon("arrow-back-up", size=16), f"Reinstate ({len(delisted)})"],
 					className="deh-btn deh-btn-ghost sm",
-					title="Bring back a delisted recording, with its results",
+					title="Bring back delisted recordings, with their results",
 					disabled=project["error"] is not None,
 				)
 			),
-			dmc.MenuDropdown(
-				[
-					dmc.MenuLabel("Delisted"),
-					*(
-						dmc.MenuItem(
-							html.Span(name, className="deh-mono"),
-							id={"type": "reinstate-recording", "project": location, "index": name},
-						)
-						for name in delisted
-					),
-				]
+			dmc.PopoverDropdown(
+				dmc.Stack(
+					[
+						dcc.Store(id={"type": "reinstate-names", "index": location}, data=delisted),
+						dmc.Checkbox(
+							id={"type": "reinstate-all", "index": location},
+							label="Select all",
+							checked=False,
+							size="xs",
+						),
+						dmc.CheckboxGroup(
+							id={"type": "reinstate-pick", "index": location},
+							value=[],
+							children=dmc.Stack(
+								[
+									dmc.Checkbox(
+										value=name,
+										label=html.Span(name, className="deh-mono"),
+										size="xs",
+									)
+									for name in delisted
+								],
+								gap=6,
+							),
+						),
+						html.Button(
+							"Reinstate",
+							id={"type": "reinstate-recordings", "index": location},
+							className="deh-btn deh-btn-primary sm",
+						),
+					],
+					gap=10,
+				)
 			),
 		],
 		position="bottom-start",
@@ -559,8 +639,8 @@ def _reinstate_menu(project: dict) -> dmc.Menu:
 def _project_download_items(pid: str) -> list[tuple[str, str, str]]:
 	base = f"/download/project/{pid}"
 	return [
-		("table", "Project table · parquet", f"{base}/table.parquet"),
-		("file-type-csv", "Project table · CSV", f"{base}/table.csv"),
+		("table", "Project table · parquet", f"{base}/table"),
+		("file-type-csv", "Project table · CSV", f"{base}/table?format=csv"),
 		("file-zip", "Configs and results · zip", f"{base}/archive.zip"),
 		("file-zip", "Configs, results and raw data · zip", f"{base}/archive.zip?raw=1"),
 	]
@@ -673,7 +753,6 @@ def _project_rows(
 	analysed = sum(recording["done"] == recording["total"] for recording in recordings)
 	partial = sum(0 < recording["done"] < recording["total"] for recording in recordings)
 	share = round(100 * analysed / len(recordings)) if recordings else 0
-	table_rows = project["table_rows"]
 
 	rows = [
 		html.Tr(
@@ -712,11 +791,7 @@ def _project_rows(
 						className="deh-an",
 					)
 				),
-				html.Td(
-					_badge("neutral", "database", f"{table_rows:,} rows")
-					if table_rows is not None
-					else _badge("neutral", "circle-dashed", "Not generated")
-				),
+				html.Td(_table_cell(project)),
 				html.Td(
 					html.Div(
 						[
@@ -819,8 +894,16 @@ def _project_detail(
 										"place": "table",
 										"index": location,
 									},
-									className="deh-btn sm",
+									className="deh-btn deh-btn-primary sm",
 									disabled=not loadable,
+								),
+								# Shown by deh.paintSelection once two or more are selected.
+								html.Button(
+									[icon("trash", size=16), "Remove selected"],
+									id={"type": "remove-recordings", "index": location},
+									className="deh-btn sm",
+									hidden=sum(key[0] == location for key in selected) < 2,
+									disabled=not loadable or progress is not None,
 								),
 								*([_reinstate_menu(project)] if project["delisted"] else []),
 							],
@@ -998,6 +1081,7 @@ clientside_callback(
 	Input("selection", "data"),
 	State({"type": "recording-check", "project": ALL, "index": ALL}, "checked"),
 	State({"type": "select-all", "index": ALL}, "checked"),
+	State({"type": "remove-recordings", "index": ALL}, "hidden"),
 	prevent_initial_call=True,
 )
 
@@ -1091,10 +1175,11 @@ def _create_project(_open, _cancel, _submit, name, experimenter, folder, descrip
 
 for event_store, button in [
 	("remove-project-event", {"type": "remove-project", "index": ALL}),
-	("generate-table-event", {"type": "generate-table", "index": ALL}),
+	("generate-table-event", {"type": "generate-table", "place": ALL, "index": ALL}),
 	("add-recordings-event", {"type": "add-recordings", "place": ALL, "index": ALL}),
 	("remove-recording-event", {"type": "remove-recording", "project": ALL, "index": ALL}),
-	("reinstate-recording-event", {"type": "reinstate-recording", "project": ALL, "index": ALL}),
+	("remove-recordings-event", {"type": "remove-recordings", "index": ALL}),
+	("reinstate-recordings-event", {"type": "reinstate-recordings", "index": ALL}),
 ]:
 	clientside_callback(
 		ClientsideFunction("deh", "clickEvent"),
@@ -1138,6 +1223,23 @@ def _generate_table(event):
 	return time.time()
 
 
+def _reason(error: Exception) -> str:
+	"""Why a recording was not added, worded for the person who uploaded it."""
+	if isinstance(error, ValidationError):
+		return "; ".join(
+			(f"{'.'.join(map(str, e['loc']))}: " if e["loc"] else "")
+			+ e["msg"].removeprefix("Value error, ")
+			for e in error.errors()
+		)
+	if isinstance(error, json.JSONDecodeError):
+		return f"the config file is not valid JSON ({error})"
+	if isinstance(error, KeyError):
+		return f"the config file has no {error} entry"
+	if isinstance(error, ValueError | OSError):
+		return str(error)
+	return f"{type(error).__name__}: {error}"
+
+
 @callback(
 	Output("upload-modal", "opened"),
 	Output("upload-modal", "title"),
@@ -1145,6 +1247,7 @@ def _generate_table(event):
 	Output("upload-report", "children"),
 	Output("upload-files", "contents"),
 	Output("data-changed", "data", allow_duplicate=True),
+	Output("replace-pending", "data"),
 	Input("add-recordings-event", "data"),
 	Input("upload-files", "contents"),
 	Input("upload-close", "n_clicks"),
@@ -1153,43 +1256,116 @@ def _generate_table(event):
 	prevent_initial_call=True,
 )
 def _add_recordings(event, contents, _close, filenames, location):
-	unchanged = (no_update,) * 6
+	unchanged = (no_update,) * 7
 	if ctx.triggered_id == "upload-close":
-		return False, no_update, no_update, None, None, no_update
+		return False, no_update, no_update, None, None, no_update, no_update
 	if ctx.triggered_id == "add-recordings-event":
 		location = event["id"]["index"]
 		title = f"Add recordings to {services.project_summary(location)['name']}"
-		return True, title, location, None, None, no_update
+		return True, title, location, None, None, no_update, no_update
 	if not contents:  # our own reset of the drop zone comes back through this Input
 		return unchanged
 
 	project = services.load_project(location)
-	with tempfile.TemporaryDirectory(prefix="deh-upload-") as staging:
-		files = []
-		for name, blob in zip(filenames, contents, strict=True):
-			path = Path(staging) / Path(name).name
-			path.write_bytes(base64.b64decode(blob.split(",", 1)[1]))
-			files.append(path)
+	# Outlives this callback when a name is taken: the files wait there for Replace or Skip.
+	# ponytail: leaks if the browser closes mid-dialog; the OS temp cleanup reclaims it.
+	staging = Path(tempfile.mkdtemp(prefix="deh-upload-"))
+	files = []
+	for name, blob in zip(filenames, contents, strict=True):
+		path = staging / Path(name).name
+		path.write_bytes(base64.b64decode(blob.split(",", 1)[1]))
+		files.append(path)
 
-		added, failed = project.add_recordings(files)
+	report = project.add_recordings(files)
+	pending = no_update
+	if report.existing:
+		existing = {name: [str(path) for path in paths] for name, paths in report.existing.items()}
+		pending = {"location": location, "staging": str(staging), "existing": existing}
+	else:
+		shutil.rmtree(staging, ignore_errors=True)
 
-	problems = [
-		f"{source.name}: {type(source.error).__name__}: {source.error}" for source in failed
-	]
+	problems = [f"{source.name}: {_reason(source.error)}" for source in report.failed]
 	if not problems:
-		noun = "recording" if len(added) == 1 else "recordings"
-		notify("good", f"Added {len(added)} {noun} to {project.project_name}")
-		return False, no_update, no_update, None, None, time.time()
+		if report.added or not report.existing:
+			noun = "recording" if len(report.added) == 1 else "recordings"
+			notify("good", f"Added {len(report.added)} {noun} to {project.project_name}")
+		return False, no_update, no_update, None, None, time.time(), pending
 
-	notify("warn", f"Added {len(added)}; {len(problems)} could not be added")
-	report = html.Div(
+	more = f" (+{len(problems) - 1} more below)" if len(problems) > 1 else ""
+	notify("bad" if not report.added else "warn", f"Not added - {problems[0]}{more}")
+	alert = html.Div(
 		[
 			icon("circle-x"),
 			html.Div([html.B("Not added"), html.Pre("\n".join(problems))]),
 		],
 		className="deh-alert deh-alert-bad",
 	)
-	return True, no_update, no_update, report, None, time.time()
+	return True, no_update, no_update, alert, None, time.time(), pending
+
+
+def _replace_prompt(queue: dict) -> tuple:
+	"""The Replace dialog asking about the first recording still waiting in ``queue``."""
+	names = queue["waiting"]
+	text = [
+		html.B(names[0]),
+		" is already in this project. Replacing it discards its results, so it must be "
+		"analysed again.",
+	]
+	more = len(names) - 1
+	label = f"Do the same for the {more} other recording{'s' if more > 1 else ''} already here"
+	return True, text, label, False, {"display": "flex" if more else "none"}
+
+
+@callback(
+	Output("replace-modal", "opened"),
+	Output("replace-text", "children"),
+	Output("replace-all", "label"),
+	Output("replace-all", "checked"),
+	Output("replace-all", "style"),
+	Output("replace-queue", "data"),
+	Output("data-changed", "data", allow_duplicate=True),
+	Input("replace-pending", "data"),
+	Input("replace-skip", "n_clicks"),
+	Input("replace-confirm", "n_clicks"),
+	State("replace-queue", "data"),
+	State("replace-all", "checked"),
+	prevent_initial_call=True,
+)
+def _replace_recordings(pending, _skip, _confirm, queue, apply_to_all):
+	if ctx.triggered_id == "replace-pending":
+		if not pending:
+			raise PreventUpdate
+		queue = {**pending, "waiting": list(pending["existing"]), "replace": []}
+		return *_replace_prompt(queue), queue, no_update
+
+	waiting = queue["waiting"]
+	decided = len(waiting) if apply_to_all else 1
+	if ctx.triggered_id == "replace-confirm":
+		queue["replace"] += waiting[:decided]
+	queue["waiting"] = waiting[decided:]
+	if queue["waiting"]:
+		return *_replace_prompt(queue), queue, no_update
+
+	# Every name is decided: add the ones to replace, then let go of the staged files.
+	project = services.load_project(queue["location"])
+	files = [path for name in queue["replace"] for path in queue["existing"][name]]
+	report = project.add_recordings(files, overwrite=True) if files else None
+	shutil.rmtree(queue["staging"], ignore_errors=True)
+
+	if report is None:
+		notify("info", "Nothing replaced; the recordings already in the project stay as they were")
+		return False, no_update, no_update, no_update, no_update, None, no_update
+	messages = []
+	if report.replaced:
+		messages.append(
+			f"Replaced {', '.join(report.replaced)} in {project.project_name}; "
+			"the previous results were discarded"
+		)
+	if report.failed:
+		reasons = "; ".join(f"{f.name}: {_reason(f.error)}" for f in report.failed)
+		messages.append(f"Not replaced - {reasons}")
+	notify("bad" if not report.replaced else "warn", ". ".join(messages))
+	return False, no_update, no_update, no_update, no_update, None, time.time()
 
 
 @callback(
@@ -1199,6 +1375,7 @@ def _add_recordings(event, contents, _close, filenames, location):
 	Output("data-changed", "data", allow_duplicate=True),
 	Output("selection", "data", allow_duplicate=True),
 	Input("remove-recording-event", "data"),
+	Input("remove-recordings-event", "data"),
 	Input("remove-cancel", "n_clicks"),
 	Input("remove-delist", "n_clicks"),
 	Input("remove-delete", "n_clicks"),
@@ -1206,37 +1383,68 @@ def _add_recordings(event, contents, _close, filenames, location):
 	State("selection", "data"),
 	prevent_initial_call=True,
 )
-def _remove_recording(event, _cancel, _delist, _delete, target, selection):
-	if ctx.triggered_id == "remove-recording-event":
-		location, name = event["id"]["project"], event["id"]["index"]
-		return True, f"Remove {name}?", [location, name], no_update, no_update
+def _remove_recording(event, bulk_event, _cancel, _delist, _delete, target, selection):
+	if ctx.triggered_id in ("remove-recording-event", "remove-recordings-event"):
+		if ctx.triggered_id == "remove-recording-event":
+			location, names = event["id"]["project"], [event["id"]["index"]]
+		else:
+			location = bulk_event["id"]["index"]
+			names = [name for project, name in selection if project == location]
+		title = f"Remove {names[0]}?" if len(names) == 1 else f"Remove {len(names)} recordings?"
+		return True, title, [location, names], no_update, no_update
 	if ctx.triggered_id == "remove-cancel":
 		return False, no_update, no_update, no_update, no_update
 
-	location, name = target
+	location, names = target
 	delete_files = ctx.triggered_id == "remove-delete"
-	services.load_project(location).remove_recording(name, delete_files=delete_files)
+	project = services.load_project(location)
+	for name in names:
+		project.remove_recording(name, delete_files=delete_files)
+	what = names[0] if len(names) == 1 else f"{len(names)} recordings"
 	notify(
 		"info",
-		f"Deleted {name} and its files" if delete_files else f"Delisted {name}; its files stay",
+		f"Deleted {what} and the files" if delete_files else f"Delisted {what}; the files stay",
 	)
-	kept = [key for key in selection if key != [location, name]]
+	kept = [key for key in selection if key[0] != location or key[1] not in names]
 	return False, no_update, no_update, time.time(), kept
+
+
+clientside_callback(
+	ClientsideFunction("deh", "selectDelisted"),
+	Output({"type": "reinstate-pick", "index": MATCH}, "value"),
+	Output({"type": "reinstate-all", "index": MATCH}, "checked"),
+	Output({"type": "reinstate-all", "index": MATCH}, "indeterminate"),
+	Input({"type": "reinstate-all", "index": MATCH}, "checked"),
+	Input({"type": "reinstate-pick", "index": MATCH}, "value"),
+	State({"type": "reinstate-names", "index": MATCH}, "data"),
+	prevent_initial_call=True,
+)
 
 
 @callback(
 	Output("data-changed", "data", allow_duplicate=True),
-	Input("reinstate-recording-event", "data"),
+	Input("reinstate-recordings-event", "data"),
+	State({"type": "reinstate-pick", "index": ALL}, "value"),
 	prevent_initial_call=True,
 )
-def _reinstate_recording(event):
-	location, name = event["id"]["project"], event["id"]["index"]
-	try:
-		services.load_project(location).reinstate_recording(name)
-	except FileNotFoundError as exc:
-		notify("bad", str(exc))
+def _reinstate_recordings(event, _picks):
+	location = event["id"]["index"]
+	names = next(pick["value"] for pick in ctx.states_list[0] if pick["id"]["index"] == location)
+	if not names:
+		raise PreventUpdate
+	project = services.load_project(location)
+	reinstated = []
+	for name in names:
+		try:
+			project.reinstate_recording(name)
+		except FileNotFoundError as exc:
+			notify("bad", str(exc))
+		else:
+			reinstated.append(name)
+	if not reinstated:
 		return no_update
-	notify("good", f"Reinstated {name}")
+	what = reinstated[0] if len(reinstated) == 1 else f"{len(reinstated)} recordings"
+	notify("good", f"Reinstated {what}")
 	return time.time()
 
 
@@ -1368,7 +1576,6 @@ def _cancel_run(_clicks, selection):
 
 clientside_callback(
 	ClientsideFunction("deh", "copyPath"),
-	Output("notifications", "sendNotifications", allow_duplicate=True),
 	Input({"type": "copy-path", "place": ALL, "index": ALL}, "n_clicks"),
 	prevent_initial_call=True,
 )

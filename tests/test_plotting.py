@@ -696,6 +696,7 @@ def test_phase_onsets_are_measured_from_the_start_onset():
 		start="2023-05-24 13:00:00",
 		phases={"light_phase": dt.time(1, 0), "dark_phase": dt.time(13, 0)},
 		start_from="dark_phase",
+		end_with="light_phase",
 	)
 
 	assert PlotContext.from_recording(recording).phases == {"light_phase": 12.0, "dark_phase": 0.0}
@@ -775,6 +776,8 @@ def test_faceted_heatmap_stacks_one_panel_per_row_in_order():
 	assert [trace.z.tolist() for trace in figure.data] == [
 		values.tolist() for values in heatmap.values
 	]
+	axes = [figure.layout[name] for name in figure.layout if name.startswith(("xaxis", "yaxis"))]
+	assert all(axis.showspikes and axis.spikemode == "across" for axis in axes)
 
 
 def test_faceted_grid_heatmap_lays_panels_out_in_one_row():
@@ -793,6 +796,44 @@ def test_faceted_grid_heatmap_lays_panels_out_in_one_row():
 	assert [trace.xaxis for trace in figure.data] == ["x", "x2", "x3", "x4"]
 	domains = {figure.layout[trace.yaxis.replace("y", "yaxis")].domain for trace in figure.data}
 	assert len(domains) == 1
+
+
+@pytest.mark.parametrize(("grid", "rows", "cols"), [(False, 4, 2), (True, 2, 4)])
+def test_faceted_heatmap_wraps_past_four_panels_per_line(grid, rows, cols):
+	"""An eight-cage habitat squeezed every panel into one column or one row."""
+	facets = [f"cage_{index}" for index in range(1, 9)]
+	heatmap = Heatmap(
+		values=np.zeros((8, 2, 2)), text=None, label="", x=["a", "b"], y=["a", "b"], facets=facets
+	)
+
+	figure = plot_factory._faceted_heatmap(heatmap, "T", "", "", ("X", "Y"), grid=grid)
+
+	def domain(trace: go.Heatmap, axis: str) -> tuple[float, float]:
+		return figure.layout[getattr(trace, f"{axis}axis").replace(axis, f"{axis}axis")].domain
+
+	assert len({domain(trace, "x") for trace in figure.data}) == cols
+	assert len({domain(trace, "y") for trace in figure.data}) == rows
+	# Titles stay over their own panel: each sits centred on its trace's x domain.
+	for title, trace in zip(figure.layout.annotations, figure.data, strict=True):
+		assert title.x == pytest.approx(sum(domain(trace, "x")) / 2)
+
+
+def test_sum_line_keeps_its_spline_past_a_thousand_points(context):
+	frame = pl.DataFrame(
+		{
+			"animal_id": pl.Series(ANIMALS * 300, dtype=pl.Enum(ANIMALS)),
+			"day": [day for day in range(1, 301) for _ in ANIMALS],
+			"total": range(1200),
+		}
+	)
+	mapping = animals_module.resolve_colors(context, "animal_id")
+	no_spans = pl.DataFrame(
+		schema={"event": pl.String, "position": pl.String, "x0": pl.Float64, "x1": pl.Float64}
+	)
+
+	figure = plot_factory.plot_sum_line(frame, mapping, "activity", "day", context.phases, no_spans)
+
+	assert {trace.type for trace in figure.data if trace.xaxis == "x"} == {"scatter"}
 
 
 def test_positioned_event_is_drawn_only_on_its_cages_panel():
@@ -869,12 +910,103 @@ def test_datetime_spans_are_written_like_the_trace_they_mark(context):
 		ranking, mapping, prepare.prep_event_spans(with_bouts, (1, 2), "day", "datetime")
 	)
 	payload = json.loads(figure.to_json())
+	(csv,) = export.figure_data_csv(payload)
 
-	assert payload["layout"]["shapes"][0]["x0"] == payload["data"][0]["x"][0]
+	assert dt.datetime.fromisoformat(payload["layout"]["shapes"][0]["x0"]) == (
+		dt.datetime.fromisoformat(pl.read_csv(csv.encode())["x"][0])
+	)
 
 
-def test_timeline_ships_wall_clock_numbers_and_reads_back_as_dates():
-	"""The timeline's axes are typed arrays, but its hover and CSV still name dates and animals."""
+def test_timeline_buckets_take_their_dominant_position_until_zoomed_in(context):
+	"""A 2000 s span buckets by the second, so a 0.3 s tunnel crossing folds into the cage
+	it was mostly spent in; zoomed to 1.5 s, the buckets are milliseconds and it is back."""
+	zone = "Europe/Warsaw"
+	noon = dt.datetime(2023, 5, 24, 12, tzinfo=ZoneInfo(zone))
+	main_df = pl.DataFrame(
+		{
+			"animal_id": ["0035A", "0035A", "0035A", "0035B"],
+			"position": ["cage_1", "tunnel_1_a", "cage_2", "cage_1"],
+			"datetime": [noon + dt.timedelta(seconds=s) for s in (1000, 1000.3, 2000, 2000)],
+			"time_spent": [dt.timedelta(seconds=s) for s in (1000, 0.3, 999.7, 2000)],
+			"day": [1] * 4,
+		},
+		schema_overrides={"datetime": pl.Datetime("us", zone)},
+	)
+	context = replace(context, _loaded={"main_df": main_df})
+
+	def wall(seconds: float) -> dt.datetime:
+		return dt.datetime(2023, 5, 24, 12) + dt.timedelta(seconds=seconds)
+
+	assert prepare.prep_timeline(context, (1, 1), "day").rows() == [
+		("0035A", "cage_1", wall(0), wall(1000)),
+		("0035A", "cage_2", wall(1000), wall(2000)),
+		("0035B", "cage_1", wall(0), wall(2000)),
+	]
+
+	zoomed = ("2023-05-24 12:16:39.5", "2023-05-24 12:16:41")
+	assert prepare.prep_timeline(context, (1, 1), "day", x_range=zoomed).rows() == [
+		("0035A", "cage_1", wall(999.5), wall(1000)),
+		("0035A", "tunnel_1", wall(1000), wall(1000.3)),
+		("0035A", "cage_2", wall(1000.3), wall(1001)),
+		("0035B", "cage_1", wall(999.5), wall(1001)),
+	]
+
+
+def test_timeline_bars_stop_where_the_visits_do_not_at_bucket_edges(context):
+	"""The 999 ms buckets of this 1999.75 s span are counted from the epoch, so neither the
+	first read, the undefined gap nor the last read falls on an edge; the bars still do."""
+	zone = "Europe/Warsaw"
+	noon = dt.datetime(2023, 5, 24, 12, tzinfo=ZoneInfo(zone))
+	main_df = pl.DataFrame(
+		{
+			"animal_id": ["0035A"] * 3,
+			"position": ["cage_1", "undefined", "cage_2"],
+			"datetime": [noon + dt.timedelta(seconds=s) for s in (1000.5, 1200, 2000.25)],
+			"time_spent": [dt.timedelta(seconds=s) for s in (1000, 199.5, 800.25)],
+			"day": [1] * 3,
+		},
+		schema_overrides={"datetime": pl.Datetime("us", zone)},
+	)
+	context = replace(context, _loaded={"main_df": main_df})
+
+	def wall(seconds: float) -> dt.datetime:
+		return dt.datetime(2023, 5, 24, 12) + dt.timedelta(seconds=seconds)
+
+	assert prepare.prep_timeline(context, (1, 1), "day").rows() == [
+		("0035A", "cage_1", wall(0.5), wall(1000.5)),
+		("0035A", "cage_2", wall(1200), wall(2000.25)),
+	]
+
+
+def test_timeline_leaves_an_undefined_gap_empty_between_bars_at_one_position(context):
+	"""The 1.4 s gap spends under half of either 1 s bucket at cage_1, so both buckets go
+	undefined and the bar breaks, where a vote among defined visits alone bridged it."""
+	zone = "Europe/Warsaw"
+	noon = dt.datetime(2023, 5, 24, 12, tzinfo=ZoneInfo(zone))
+	main_df = pl.DataFrame(
+		{
+			"animal_id": ["0035A"] * 3,
+			"position": ["cage_1", "undefined", "cage_1"],
+			"datetime": [noon + dt.timedelta(seconds=s) for s in (1000.3, 1001.7, 2000)],
+			"time_spent": [dt.timedelta(seconds=s) for s in (1000.3, 1.4, 998.3)],
+			"day": [1] * 3,
+		},
+		schema_overrides={"datetime": pl.Datetime("us", zone)},
+	)
+	context = replace(context, _loaded={"main_df": main_df})
+
+	def wall(seconds: float) -> dt.datetime:
+		return dt.datetime(2023, 5, 24, 12) + dt.timedelta(seconds=seconds)
+
+	assert prepare.prep_timeline(context, (1, 1), "day").rows() == [
+		("0035A", "cage_1", wall(0), wall(1000)),
+		("0035A", "cage_1", wall(1002), wall(2000)),
+	]
+
+
+def test_timeline_ships_wall_clock_strings_and_reads_back_as_dates():
+	"""The timeline's x is wall-clock strings - plotly reads epoch numbers in the browser's
+	zone - and its y a typed array, but its CSV still names dates and animals."""
 	zone = "Europe/Warsaw"
 
 	def at(hour: int) -> dt.datetime:
@@ -898,18 +1030,26 @@ def test_timeline_ships_wall_clock_numbers_and_reads_back_as_dates():
 		("cage_1", "0035A", True),
 		("cage_1", "0035B", False),
 		("tunnel_1", "0035A", True),
+		("tunnel_1", "0035B", False),
 	]
-	assert all("bdata" in trace["x"] and "bdata" in trace["y"] for trace in payload["data"])
+	assert payload["data"][0]["x"] == [
+		"2023-05-24 02:00:00.000000",
+		"2023-05-24 03:00:00.000000",
+		None,
+	]
+	# Plotly hides a zero-length trace, legend entry and all.
+	assert all(trace["x"] for trace in payload["data"])
+	assert all("bdata" in trace["y"] for trace in payload["data"])
 	assert payload["layout"]["xaxis"]["type"] == "date"
 
 	(csv,) = export.figure_data_csv(payload)
 	assert pl.read_csv(csv.encode()).rows() == [
-		("cage_1", "2023-05-24T02:00:00.000", "0035A"),
-		("cage_1", "2023-05-24T03:00:00.000", "0035A"),
-		("cage_1", "2023-05-24T01:00:00.000", "0035B"),
-		("cage_1", "2023-05-24T02:00:00.000", "0035B"),
-		("tunnel_1", "2023-05-24T04:00:00.000", "0035A"),
-		("tunnel_1", "2023-05-24T05:00:00.000", "0035A"),
+		("cage_1", "2023-05-24 02:00:00.000000", "0035A"),
+		("cage_1", "2023-05-24 03:00:00.000000", "0035A"),
+		("cage_1", "2023-05-24 01:00:00.000000", "0035B"),
+		("cage_1", "2023-05-24 02:00:00.000000", "0035B"),
+		("tunnel_1", "2023-05-24 04:00:00.000000", "0035A"),
+		("tunnel_1", "2023-05-24 05:00:00.000000", "0035A"),
 	]
 
 
@@ -921,8 +1061,9 @@ def test_quality_heatmap_pivots_miss_rate_by_animal_and_antenna(context):
 		{
 			"animal_id": [ANIMALS[0], ANIMALS[0], ANIMALS[1], ANIMALS[1]],
 			"antenna": [1, 2, 1, 2],
-			"detected": [10, 10, 10, 10],
-			"missed": [0, 5, 2, 0],
+			"correct": [10, 10, 10, 10],
+			"interpolated": [0, 2, 0, 0],
+			"bad": [0, 3, 2, 0],
 			"miss_rate": [0.0, 33.3, 16.7, 0.0],
 		}
 	)
@@ -940,8 +1081,9 @@ def test_heatmap_rows_follow_the_label(context):
 		{
 			"animal_id": ANIMALS,
 			"antenna": [1] * 4,
-			"detected": [10] * 4,
-			"missed": [0, 1, 2, 3],
+			"correct": [10] * 4,
+			"interpolated": [0] * 4,
+			"bad": [0, 1, 2, 3],
 			"miss_rate": [0.0, 9.1, 16.7, 23.1],
 		}
 	)
@@ -953,16 +1095,17 @@ def test_heatmap_rows_follow_the_label(context):
 
 
 def test_quality_by_antenna_pools_counts_rather_than_averaging_rates():
-	"""A pooled rate weighs by how much was actually seen, not by cell count."""
+	"""A pooled share weighs by how much was actually seen, not by cell count."""
 	quality = pl.DataFrame(
 		{
 			"animal_id": ["a", "a", "b", "b"],
 			"antenna": [1, 2, 1, 2],
-			# Antenna 1: 1 missed of 1001. Antenna 2: 1 missed of 2 - a high per-cell
-			# rate that must not outweigh antenna 1's much larger sample.
-			"detected": [1000, 1, 0, 1],
-			"missed": [1, 0, 0, 1],
-			"miss_rate": [0.1, 0.0, 0.0, 50.0],
+			# Antenna 1: 1 bad of 1001. Antenna 2: 1 bad and 1 interpolated of 4 - a high
+			# per-cell rate that must not outweigh antenna 1's much larger sample.
+			"correct": [1000, 1, 0, 1],
+			"interpolated": [0, 1, 0, 0],
+			"bad": [1, 0, 0, 1],
+			"miss_rate": [0.1, 50.0, 0.0, 50.0],
 		}
 	)
 	context = PlotContext(
@@ -978,9 +1121,33 @@ def test_quality_by_antenna_pools_counts_rather_than_averaging_rates():
 
 	frame = prepare.prep_quality_by_antenna(context)
 
-	assert frame.sort("antenna")["miss_rate"].to_list() == pytest.approx(
-		[1 / 1001 * 100, 1 / 3 * 100]
+	frame = frame.sort("antenna")
+	assert frame["bad_share"].to_list() == pytest.approx([1 / 1001 * 100, 1 / 4 * 100])
+	assert frame["interpolated_share"].to_list() == pytest.approx([0.0, 1 / 4 * 100])
+	shares = frame.select(pl.sum_horizontal(pl.col("^.*_share$")))
+	assert shares.to_series().to_list() == pytest.approx([100.0, 100.0])
+
+
+def test_reads_per_antenna_stacks_every_kind_to_100_percent(context):
+	"""One bar per kind, stacked, each in its theme colour."""
+	quality = pl.DataFrame(
+		{
+			"animal_id": ANIMALS[:2],
+			"antenna": [1, 1],
+			"correct": [8, 9],
+			"interpolated": [1, 0],
+			"bad": [1, 1],
+			"miss_rate": [20.0, 10.0],
+		}
 	)
+	with_quality = replace(context, _loaded={**context._loaded, "recording_quality": quality})
+
+	figure = theme.apply(PlotRegistry.build("quality-antenna", with_quality), "dark")
+
+	assert figure.layout.barmode == "stack"
+	assert [bar.name for bar in figure.data] == ["Correct", "Interpolated", "Bad"]
+	assert sum(bar.y[0] for bar in figure.data) == pytest.approx(100.0)
+	assert [bar.marker.color for bar in figure.data] == list(theme.READ_LOOKS.values())
 
 
 def test_ranking_distribution_is_the_same_for_a_window_in_days_or_phases(context):
@@ -1003,6 +1170,31 @@ def test_ranking_distribution_is_the_same_for_a_window_in_days_or_phases(context
 	assert fit((1, 2), "day").equals(fit((1, 4), "phase_count"))
 	# The nearest phase with matches after the window must not stand in for its empty end.
 	assert fit((1, 1), "day").equals(fit((1, 2), "phase_count"))
+
+
+def test_ranking_over_time_keeps_only_rating_changes_and_each_animals_last(context):
+	"""A match moves just its two animals, so an unchanged rating adds nothing to the step line."""
+	ranking = pl.DataFrame(
+		{
+			"animal_id": ["0035A", "0035B"] * 4,
+			"ordinal": [0.0, 0.0, 1.0, 0.0, 1.0, -1.0, 1.0, -1.0],
+			"datetime": [dt.datetime(2023, 5, 24, hour) for hour in (1, 1, 2, 2, 3, 3, 4, 4)],
+			"day": [1] * 8,
+			"hour": [1, 1, 2, 2, 3, 3, 4, 4],
+		}
+	)
+	context = replace(context, _loaded={"ranking": ranking})
+
+	frame = prepare.prep_ranking_over_time(context, (1, 1), "day")
+
+	assert frame.select("animal_id", "hour").rows() == [
+		("0035A", 1),
+		("0035B", 1),
+		("0035A", 2),
+		("0035B", 3),
+		("0035A", 4),
+		("0035B", 4),
+	]
 
 
 # --- network graphs ----------------------------------------------------------

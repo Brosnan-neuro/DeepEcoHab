@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from itertools import combinations, pairwise, product
 from pathlib import Path
-from typing import Any, ClassVar, Final, Literal, NamedTuple, overload
+from typing import Annotated, Any, ClassVar, Final, Literal, NamedTuple, overload
 from zoneinfo import ZoneInfo
 
 import polars as pl
@@ -22,6 +22,7 @@ from pydantic import (
 	Field,
 	PastDate,
 	PrivateAttr,
+	StringConstraints,
 	ValidationInfo,
 	computed_field,
 	field_serializer,
@@ -30,6 +31,8 @@ from pydantic import (
 from tqdm.auto import tqdm
 
 from deepecohab.core import topology
+
+NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 CALENDAR_COLUMNS: Final = ("phase", "day", "phase_count", "hour")
 """The columns placing a row on the recording's calendar; every analysis table is keyed by them."""
@@ -147,14 +150,14 @@ class Animal(BaseModel):
 	``animals`` table joins onto any analysis table.
 	"""
 
-	tag: str
-	mouse_line: str
-	genotype: str
-	subject_name: str
-	sex: str
+	tag: NonEmptyStr
+	mouse_line: NonEmptyStr
+	genotype: NonEmptyStr
+	subject_name: NonEmptyStr | None = None
+	sex: NonEmptyStr
 	date_of_birth: PastDate
-	genetic_background: str
-	treatment: str
+	genetic_background: NonEmptyStr
+	treatment: NonEmptyStr | None = None
 	notes: str
 
 
@@ -210,6 +213,7 @@ class Timeline(BaseModel):
 	recording_timezone: ZoneInfo
 	phases: dict[Literal["light_phase", "dark_phase"], dt.time]
 	start_from: Literal["light_phase", "dark_phase"]
+	end_with: Literal["light_phase", "dark_phase"]
 
 	@model_validator(mode="after")
 	def _check_timeline(self) -> "Timeline":
@@ -221,10 +225,17 @@ class Timeline(BaseModel):
 				f"start_from is {self.start_from!r} but phases only defines {sorted(self.phases)}."
 			)
 
-		if self.experiment_start >= self.end_datetime:
+		if self.end_with not in self.phases or len(self.phases) < 2:
 			raise ValueError(
-				f"The recording ends before {self.start_from!r} first starts, at "
-				f"{self.experiment_start}, so it holds no experiment to analyse."
+				f"end_with is {self.end_with!r}, which ends where the other phase begins, "
+				f"but phases only defines {sorted(self.phases)}."
+			)
+
+		if self.experiment_start >= self.experiment_end:
+			raise ValueError(
+				f"The recording holds no experiment to analyse: it would start at "
+				f"{self.experiment_start} ({self.start_from!r} onset) and end at "
+				f"{self.experiment_end} (end of {self.end_with!r})."
 			)
 		return self
 
@@ -263,32 +274,46 @@ class Timeline(BaseModel):
 		"""
 		return max(_elapsed(self.experiment_start, self.start_datetime), dt.timedelta(0))
 
+	@computed_field
+	@property
+	def experiment_end(self) -> dt.datetime:
+		"""When the experiment proper ends: the ``end_with`` phase's close nearest acquisition end.
+
+		A phase ends where the other one begins. Like :attr:`experiment_start`, this
+		can fall a little after recording stopped, which leaves the last phase short.
+		"""
+		end = self.end_datetime.astimezone(self.recording_timezone)
+		closing = next(phase for phase in self.phases if phase != self.end_with)
+		onset = self.phases[closing]
+
+		candidates = [
+			dt.datetime.combine(
+				end.date() + dt.timedelta(days=offset), onset, tzinfo=self.recording_timezone
+			)
+			for offset in (-1, 0, 1)
+		]
+		nearest = min(candidates, key=lambda moment: abs(_elapsed(end, moment)))
+		return _real_wall_clock(nearest, self.recording_timezone)
+
+	@property
+	def discarded_tail(self) -> dt.timedelta:
+		"""Data recorded after :attr:`experiment_end`, which the analysis leaves out."""
+		return max(_elapsed(self.experiment_end, self.end_datetime), dt.timedelta(0))
+
 	@property
 	def unrecorded_tail(self) -> dt.timedelta:
-		"""Time between the end of recording and the next phase onset, never captured.
+		"""Time between the end of recording and :attr:`experiment_end`, never captured.
 
-		The last phase is short by this much.
+		The last phase is short by this much, and no data is dropped.
 		"""
-		end = _real_wall_clock(self.end_datetime, self.recording_timezone)
-		onsets = (
-			dt.datetime.combine(
-				end.date() + dt.timedelta(days=n), hhmm, tzinfo=self.recording_timezone
-			)
-			for n in range(3)
-			for hhmm in set(self.phases.values())
-		)
-		return min(
-			_elapsed(end, onset)
-			for onset in onsets
-			if self._wall_clock_exists(onset) and _elapsed(end, onset) >= dt.timedelta(0)
-		)
+		return max(_elapsed(self.end_datetime, self.experiment_end), dt.timedelta(0))
 
 	@computed_field
 	@property
 	def days_range(self) -> tuple[int, int]:
 		"""Range of experiment days present in the recording."""
 		start, end = self.local_span
-		return (1, _elapsed(start, end) // dt.timedelta(days=1) + 1)
+		return (1, -(-_elapsed(start, end) // dt.timedelta(days=1)))
 
 	@computed_field
 	@property
@@ -298,12 +323,13 @@ class Timeline(BaseModel):
 
 	@property
 	def local_span(self) -> tuple[dt.datetime, dt.datetime]:
-		"""The analysed window - experiment start to recording end - in the recording timezone.
+		"""The analysed window - experiment start to experiment end - in the recording timezone.
 
 		Everything downstream takes its bounds from here, so the lead-in before
-		:attr:`experiment_start` is trimmed once, in one place.
+		:attr:`experiment_start` and the tail after :attr:`experiment_end` are trimmed
+		once, in one place.
 		"""
-		return self.experiment_start, _real_wall_clock(self.end_datetime, self.recording_timezone)
+		return self.experiment_start, self.experiment_end
 
 	def phase_boundaries(self) -> list[dt.datetime]:
 		"""Phase switch instants strictly inside the recording, in order."""
@@ -356,6 +382,7 @@ class Event(BaseModel):
 	name: str
 	description: str
 	bouts: list[Bout] = Field(min_length=1)
+	devices: list[str] | None = Field(default=None, min_length=1)
 
 	@model_validator(mode="after")
 	def _check_event(self) -> "Event":
@@ -366,6 +393,50 @@ class Event(BaseModel):
 					f"bouts of {self.name!r} overlap: {earlier.start} to {earlier.end} "
 					f"and {later.start} to {later.end}"
 				)
+		return self
+
+
+class Device(BaseModel):
+	"""An extra device in the habitat, such as a lickometer, read by an antenna or a TTL port.
+
+	Events name the devices they use by ``name``; ``device_type`` groups devices of one
+	kind, so two lickometers in different cages can be analysed together.
+	"""
+
+	model_config = ConfigDict(extra="forbid")
+
+	name: NonEmptyStr
+	device_type: NonEmptyStr
+	description: str
+	antenna: NonEmptyStr | None = None
+	position: str
+	TTL_port: NonEmptyStr | None = None
+
+	@model_validator(mode="after")
+	def _check_device(self) -> "Device":
+		if self.antenna is None and self.TTL_port is None:
+			raise ValueError(f"device {self.name!r} needs an antenna, a TTL_port or both")
+		return self
+
+
+class Boundary(BaseModel):
+	"""A stretch between two recording parts when nothing was recorded, from ``diagnostic.json``.
+
+	``start`` is the last record before it and ``end`` the first after it. ``kind`` is
+	``observed_record_gap`` (silence between parts, cause unknown),
+	``confirmed_DAQ_inactive`` (a clean stop and restart) or ``abrupt_end``.
+	"""
+
+	model_config = ConfigDict(extra="ignore")
+
+	start: AwareDatetime
+	end: AwareDatetime
+	kind: Literal["observed_record_gap", "confirmed_DAQ_inactive", "abrupt_end"]
+
+	@model_validator(mode="after")
+	def _check_boundary(self) -> "Boundary":
+		if self.end <= self.start:
+			raise ValueError(f"a boundary must end after it starts, got {self.start} to {self.end}")
 		return self
 
 
@@ -548,13 +619,15 @@ class Recording(BaseModel):
 
 	PREV_RANKING: ClassVar[str] = "prev_ranking.parquet"
 
-	name: str
-	project_name: str
-	recording_location: str
+	name: NonEmptyStr
+	project_name: NonEmptyStr
+	recording_location: NonEmptyStr
 	timeline: Timeline
 	cohort: Cohort
 	layout: Layout
 	events: list[Event] = Field(default_factory=list)
+	devices: list[Device] = Field(default_factory=list)
+	boundaries: list[Boundary] = Field(default_factory=list)
 	notes: str
 	data: pl.LazyFrame = Field(exclude=True, repr=False)
 
@@ -562,13 +635,17 @@ class Recording(BaseModel):
 
 	@property
 	def data_schema(self) -> pl.Schema:
-		"""Required input data schema; columns of `optional_data_schema` may follow it."""
+		"""Required input data schema, in order; columns of `optional_data_schema` may sit among it.
+
+		``inserted`` marks the rows acquisition preprocessing interpolated rather than read.
+		"""
 		return pl.Schema(
 			{
 				"datetime": pl.Datetime("us", time_zone=self.timeline.recording_timezone.key),
 				"antenna": pl.Categorical(),
 				"time_under": pl.Duration("us"),
 				"animal_id": pl.Enum(self.cohort.animal_tags),
+				"inserted": pl.Boolean(),
 			}
 		)
 
@@ -633,10 +710,6 @@ class Recording(BaseModel):
 
 		return pl.read_parquet(path) if eager else pl.scan_parquet(path)
 
-	def to_config(self) -> dict[str, Any]:
-		"""JSON-ready snapshot of the metadata; the frame itself is not included."""
-		return self.model_dump(mode="json")
-
 	def update_notes(self, notes: str, tag: str | None = None) -> None:
 		"""Set this recording's notes, or one animal's, and persist them to its config.json.
 
@@ -652,9 +725,7 @@ class Recording(BaseModel):
 			self.notes = notes
 		else:
 			{animal.tag: animal for animal in self.cohort.animals}[tag].notes = notes
-		(self.root / "config.json").write_text(
-			json.dumps(self.to_config(), indent=2), encoding="utf-8"
-		)
+		(self.root / "config.json").write_text(self.model_dump_json(indent=2), encoding="utf-8")
 
 	@property
 	def prev_ranking(self) -> pl.DataFrame | None:
@@ -694,7 +765,7 @@ class Recording(BaseModel):
 
 	@classmethod
 	def from_config(cls, config: dict[str, Any], data_path: Path) -> "Recording":
-		"""Rebuild a recording from to_config() output, reattaching its parquet."""
+		"""Rebuild a recording from its config.json contents, reattaching its parquet."""
 		return cls.model_validate(config, context={"data_path": data_path})
 
 	@model_validator(mode="before")
@@ -707,15 +778,23 @@ class Recording(BaseModel):
 
 	@model_validator(mode="after")
 	def _check_schema(self, info: ValidationInfo) -> "Recording":
-		path = (info.context or {}).get("data_path", "<data>")
+		path = Path((info.context or {}).get("data_path", "<data>")).name
 		found = self.data.collect_schema()
+		required = self.data_schema
 		optional = {col: dtype for col, dtype in self.optional_data_schema.items() if col in found}
-		expected = pl.Schema({**self.data_schema, **optional})
+		expected = {**required, **optional}
 
-		if found != expected:
-			raise ValueError(
-				f"{path}: schema mismatch\n  expected: {expected}\n  found:    {found}"
-			)
+		problems = [f"no {col} column" for col in required if col not in found]
+		problems += [f"unexpected {col} column" for col in found if col not in expected]
+		problems += [
+			f"{col} is {found[col]}, expected {dtype}"
+			for col, dtype in expected.items()
+			if col in found and found[col] != dtype
+		]
+		if not problems and [col for col in found if col in required] != list(required):
+			problems = [f"columns must be in the order {', '.join(required)}"]
+		if problems:
+			raise ValueError(f"{path}: schema mismatch - {'; '.join(problems)}")
 		return self
 
 	@model_validator(mode="after")
@@ -728,7 +807,7 @@ class Recording(BaseModel):
 		undefined. The other direction is left alone: an antenna the layout names but
 		that never read is a dead antenna, which ``recording_quality`` reports.
 		"""
-		path = (info.context or {}).get("data_path", "<data>")
+		path = Path((info.context or {}).get("data_path", "<data>")).name
 		named = topology.antennas(self.layout.antenna_combinations)
 		read = self.data.select(pl.col("antenna").cast(pl.Utf8).unique()).collect()["antenna"]
 
@@ -764,6 +843,46 @@ class Recording(BaseModel):
 						)
 		return self
 
+	@model_validator(mode="after")
+	def _localize_boundaries(self) -> "Recording":
+		"""Boundaries in the recording's zone, in order: polars compares datetimes of one zone."""
+		zone = self.timeline.recording_timezone
+		self.boundaries = sorted(
+			(
+				boundary.model_copy(
+					update={
+						"start": boundary.start.astimezone(zone),
+						"end": boundary.end.astimezone(zone),
+					}
+				)
+				for boundary in self.boundaries
+			),
+			key=lambda boundary: boundary.start,
+		)
+		return self
+
+	@model_validator(mode="after")
+	def _check_devices(self) -> "Recording":
+		names = [device.name for device in self.devices]
+		if duplicates := sorted({name for name in names if names.count(name) > 1}):
+			raise ValueError(f"device names must be unique, got duplicates of {duplicates}")
+
+		for event in self.events:
+			if unknown := sorted(set(event.devices or ()) - set(names)):
+				raise ValueError(
+					f"event {event.name!r} uses devices {unknown}, which the recording does not "
+					f"have; its devices are {names}"
+				)
+
+		positions = self.layout.cage_names + self.layout.tunnel_names
+		for device in self.devices:
+			if device.position not in positions:
+				raise ValueError(
+					f"device {device.name!r} is in {device.position!r}, which the layout does "
+					f"not have; its positions are {positions}"
+				)
+		return self
+
 
 #: The files a recording is delivered as, side by side as ``<name>.<suffix>``, mapped to
 #: whether it is required. The config is validated into ``config.json`` and the data into
@@ -772,8 +891,19 @@ class Recording(BaseModel):
 RECORDING_FILES: Final[dict[str, bool]] = {
 	"config.json": True,
 	"data.parquet": True,
-	"diagnostic.json": False,
+	"diagnostic.json": True,
 }
+
+
+class Diagnostic(BaseModel):
+	"""What the analysis takes from acquisition preprocessing's ``diagnostic.json``.
+
+	Only the recording boundaries; everything else in the file is left unread.
+	"""
+
+	model_config = ConfigDict(extra="ignore")
+
+	recording_boundaries: list[Boundary]
 
 
 class FailedRecording(NamedTuple):
@@ -788,41 +918,69 @@ def _group_files(
 ) -> tuple[dict[Path, dict[str, Path]], list[FailedRecording]]:
 	"""Sort files named ``<name>.<suffix>`` into one set per recording.
 
+	Suffix and name are matched ignoring case on every OS, so how files pair up does not
+	depend on the filesystem they came from. The same file given twice counts once.
+
 	Returns:
-		Every complete set, keyed by its folder and name, with its files keyed by suffix; and
-		a failure for every file no suffix in `RECORDING_FILES` fits and every set missing a
-		required file.
+		Every complete set, keyed by its resolved folder and the name as first given, with
+		its files keyed by suffix; and a failure for every file no suffix in
+		`RECORDING_FILES` fits or that has no name before it, every set missing a required
+		file, and every set given two different files for one suffix.
 	"""
-	groups: dict[Path, dict[str, Path]] = defaultdict(dict)
+	bases: dict[tuple[Path, str], Path] = {}
+	groups: dict[Path, dict[str, list[Path]]] = defaultdict(lambda: defaultdict(list))
 	failed = []
-	for path in map(Path, paths):
+	for path in (Path(p).resolve() for p in paths):
 		name = path.name.lower()
-		suffix = next(
-			(s for s in RECORDING_FILES if name.endswith(f".{s}") and name != f".{s}"), None
-		)
+		suffix = next((s for s in RECORDING_FILES if name.endswith(f".{s}")), None)
+		stem = path.name[: -len(suffix) - 1] if suffix else ""
 		if suffix is None:
-			expected = ", ".join(f"<name>.{s}" for s in RECORDING_FILES)
-			failed.append(FailedRecording(path.name, ValueError(f"not one of {expected}")))
-		else:
-			groups[path.with_name(path.name[: -len(suffix) - 1])][suffix] = path
+			*others, last = [f"<name>.{s}" for s in RECORDING_FILES]
+			reason = f"does not match the file format {', '.join(others)} or {last}"
+			failed.append(FailedRecording(path.name, ValueError(reason)))
+			continue
+		if not stem.strip(". "):
+			reason = f"has no recording name before .{suffix}"
+			failed.append(FailedRecording(path.name, ValueError(reason)))
+			continue
+		base = bases.setdefault((path.parent, stem.casefold()), path.parent / stem)
+		if path not in (found := groups[base][suffix]):
+			found.append(path)
 
 	complete = {}
 	for base, files in groups.items():
-		if missing := [s for s, required in RECORDING_FILES.items() if required and s not in files]:
-			absent = " or ".join(f"{base.name}.{s}" for s in missing)
-			failed.append(
-				FailedRecording(base.name, FileNotFoundError(f"no {absent} came with it"))
+		if clashes := {s: found for s, found in files.items() if len(found) > 1}:
+			reason = "; ".join(
+				f"{len(found)} {s.split('.')[0]} files, "
+				f"{' and '.join(p.name for p in found)} - keep one"
+				for s, found in clashes.items()
 			)
+			failed.append(FailedRecording(base.name, ValueError(reason)))
+		elif missing := [
+			s for s, required in RECORDING_FILES.items() if required and s not in files
+		]:
+			kinds = " or ".join(f"{s.split('.')[0]} file" for s in missing)
+			expected = " and ".join(f"{base.name}.{s}" for s in missing)
+			present = " and ".join(found[0].name for found in files.values())
+			reason = f"no {kinds} - expected {expected} beside {present}"
+			failed.append(FailedRecording(base.name, FileNotFoundError(reason)))
 		else:
-			complete[base] = files
+			complete[base] = {s: found[0] for s, found in files.items()}
 	return complete, failed
 
 
 class AddReport(NamedTuple):
-	"""Outcome of a batch add: names that went in, sources that didn't."""
+	"""Outcome of a batch add.
+
+	``added`` names every recording that went in, ``replaced`` those of them that took the
+	place of a same-named one. ``existing`` maps each recording left out because its name is
+	taken to its files, ready to be added again with ``overwrite=True``.
+	"""
 
 	added: list[str]
 	failed: list[FailedRecording]
+	existing: dict[str, list[Path]]
+	replaced: list[str]
 
 
 class Project(BaseModel):
@@ -931,46 +1089,82 @@ class Project(BaseModel):
 		"""Every recording in the project, in the order they were added."""
 		return list(self.data_catalog.values())
 
-	def add_recording(self, *paths: str | Path) -> Recording:
+	def add_recording(self, *paths: str | Path, overwrite: bool = False) -> Recording:
 		"""Adds one recording from its files and updates the manifest.
 
 		Args:
 			paths: the recording's files, named ``<name>.<suffix>`` for each suffix in
-				`RECORDING_FILES`; the optional ones may be left out.
+				`RECORDING_FILES`.
+			overwrite: replace a recording of the same name, listed or delisted, and
+				discard its results - how a recording is re-added with an edited config.
 
 		Raises:
 			ValueError: ``paths`` are not the files of exactly one recording.
+			FileExistsError: the name is taken and ``overwrite`` is off.
 		"""
 		groups, failed = _group_files(paths)
 		if failed or len(groups) != 1:
 			reasons = [f"{f.name}: {f.error}" for f in failed] or [f"{len(groups)} recordings"]
 			raise ValueError(f"Not the files of one recording - {'; '.join(reasons)}")
 
-		recording = self._add_one(*groups.values())
+		(files,) = groups.values()
+		recording, replaced = self._add_one(files, overwrite)
 		self._save()
+		if replaced:
+			warnings.warn(
+				f"Replaced recording {recording.name!r}; its results were discarded.", stacklevel=2
+			)
 		return recording
 
-	def add_recordings(self, paths: Iterable[str | Path]) -> AddReport:
+	def add_recordings(self, paths: Iterable[str | Path], *, overwrite: bool = False) -> AddReport:
 		"""Adds every recording among ``paths``, grouped by name as in :meth:`add_recording`.
 
 		Recordings are added independently: a failure on one, or a file that belongs to
 		none, is logged and warned about, and the rest still go in. The manifest is
-		written once, after the batch.
+		written once, after the batch. With ``overwrite`` off, a recording whose name is
+		taken is left out and listed in `AddReport.existing`.
 		"""
 		groups, failed = _group_files(paths)
 		added: list[str] = []
+		existing: dict[str, list[Path]] = {}
+		replaced: list[str] = []
 
 		for base, files in groups.items():
 			try:
-				added.append(self._add_one(files).name)
+				recording, was_replaced = self._add_one(files, overwrite)
+			except FileExistsError:
+				existing[base.name] = list(files.values())
+				continue
 			except Exception as exc:
 				failed.append(FailedRecording(base.name, exc))
 				self.log.exception("failed to add recording from %s", base)
+				continue
+			added.append(recording.name)
+			if was_replaced:
+				replaced.append(recording.name)
 
 		if added:
 			self._save()
-		self.log.info("batch add: %d added, %d failed", len(added), len(failed))
+		self.log.info(
+			"batch add: %d added (%d replaced), %d already in the project, %d failed",
+			len(added),
+			len(replaced),
+			len(existing),
+			len(failed),
+		)
 
+		if replaced:
+			warnings.warn(
+				f"Replaced {len(replaced)} recordings, discarding their results: "
+				f"{', '.join(replaced)}",
+				stacklevel=2,
+			)
+		if existing:
+			warnings.warn(
+				f"{len(existing)} recordings are already in the project and were left as they "
+				f"are; pass overwrite=True to replace them: {', '.join(existing)}",
+				stacklevel=2,
+			)
 		if failed:
 			details = "\n".join(f"  {f.name}: {type(f.error).__name__}: {f.error}" for f in failed)
 			warnings.warn(
@@ -979,7 +1173,7 @@ class Project(BaseModel):
 				stacklevel=2,
 			)
 
-		return AddReport(added, failed)
+		return AddReport(added, failed, existing, replaced)
 
 	def remove_recording(self, name: str, *, delete_files: bool = False) -> None:
 		"""Removes recording from project.
@@ -997,6 +1191,15 @@ class Project(BaseModel):
 		else:
 			self.delisted[name] = f"{name}/{self.CONFIG}"
 
+		self._drop_from_project_table(name)
+		self.log.warning(
+			"removed recording %r (files %s)",
+			name,
+			"deleted" if delete_files else "kept",
+		)
+		self._save()
+
+	def _drop_from_project_table(self, name: str) -> None:
 		table_path = self.project_location / self.PROJECT_TABLE
 		if table_path.is_file():
 			remaining = pl.read_parquet(table_path).filter(pl.col("recording") != name)
@@ -1004,13 +1207,6 @@ class Project(BaseModel):
 				table_path.unlink()
 			else:
 				remaining.write_parquet(table_path, compression="lz4")
-
-		self.log.warning(
-			"removed recording %r (files %s)",
-			name,
-			"deleted" if delete_files else "kept",
-		)
-		self._save()
 
 	def reinstate_recording(self, name: str) -> Recording:
 		"""Brings a delisted recording back from the files it left on disk.
@@ -1247,20 +1443,33 @@ class Project(BaseModel):
 		"""The recordings a run covers; the one place that decides which of them run."""
 		return [self[name] for name in names] if names is not None else self.recordings
 
-	def _add_one(self, files: dict[str, Path]) -> Recording:
+	def _add_one(self, files: dict[str, Path], overwrite: bool) -> tuple[Recording, bool]:
 		"""Validate, write, and catalog one recording from its files keyed by suffix.
 
-		Raises on any failure.
+		Returns the recording and whether it replaced a same-named one. Raises on any
+		failure, and with `FileExistsError` when the name is taken and ``overwrite`` is off.
 		"""
 		metadata = json.loads(files["config.json"].read_text(encoding="utf-8"))
-		recording = Recording.from_config(metadata["recording"], files["data.parquet"])
+		diagnostic = Diagnostic.model_validate_json(
+			files["diagnostic.json"].read_text(encoding="utf-8")
+		)
+		recording = Recording.from_config(
+			{**metadata["recording"], "boundaries": diagnostic.recording_boundaries},
+			files["data.parquet"],
+		)
 		root = self.project_location / recording.name
 
-		if recording.name in self.data_catalog or root.exists():
-			self.log.error("rejected duplicate recording %r", recording.name)
+		if root.exists() and not overwrite:
 			raise FileExistsError(
 				f"Recording {recording.name!r} is already in project {self.project_name!r}."
 			)
+
+		# Replacing discards the results too: re-uploading with an edited config is how a
+		# recording's settings change. The old folder is kept aside until the new one lands.
+		previous = root.with_name(f"{root.name}.replaced") if root.exists() else None
+		if previous:
+			shutil.rmtree(previous, ignore_errors=True)
+			root.rename(previous)
 
 		target = root / "raw" / "data.parquet"
 		try:
@@ -1268,15 +1477,21 @@ class Project(BaseModel):
 			(root / "results").mkdir(parents=True)
 			recording.data.sink_parquet(target)
 			recording.data = pl.scan_parquet(target)  # our copy, not the caller's
-			(root / self.CONFIG).write_text(
-				json.dumps(recording.to_config(), indent=2), encoding="utf-8"
-			)
+			(root / self.CONFIG).write_text(recording.model_dump_json(indent=2), encoding="utf-8")
 			for suffix, path in files.items():
 				if suffix != "data.parquet":
 					shutil.copyfile(path, root / "raw" / suffix)
 		except Exception:
-			shutil.rmtree(root, ignore_errors=True)  # only ours; root didn't exist above
+			shutil.rmtree(root, ignore_errors=True)  # only ours; the old one is aside
+			if previous:
+				previous.rename(root)
 			raise
+
+		if previous:
+			shutil.rmtree(previous, ignore_errors=True)
+			self._drop_from_project_table(recording.name)
+			self.delisted.pop(recording.name, None)
+			self.log.warning("replaced recording %r and discarded its results", recording.name)
 
 		recording._root = root
 		self.data_catalog[recording.name] = recording
@@ -1309,13 +1524,40 @@ class Project(BaseModel):
 			if lead > LEAD_WARNING_THRESHOLD:
 				warnings.warn(f"Recording {recording.name!r}: {note}.", stacklevel=2)
 
-		return recording
+		if discarded := line.discarded_tail:
+			trail = discarded
+			offset = f"{discarded} of data recorded after it is left out of the analysis"
+		elif unrecorded := line.unrecorded_tail:
+			trail = unrecorded
+			offset = (
+				f"recording stopped {unrecorded} before it, so that last phase is short by "
+				"as much and no data is dropped"
+			)
+		else:
+			trail, offset = dt.timedelta(0), ""
+
+		if offset:
+			note = (
+				f"the experiment ends at {line.experiment_end}, the nearest end of the "
+				f"{line.end_with}; {offset}"
+			)
+			self.log.warning("%r: %s", recording.name, note)
+			if trail > LEAD_WARNING_THRESHOLD:
+				warnings.warn(f"Recording {recording.name!r}: {note}.", stacklevel=2)
+
+		return recording, previous is not None
 
 	@classmethod
 	def _read_config(cls, config_path: Path) -> Recording:
 		"""Load one recording from its config.json, reattaching the sibling parquet."""
 		if not config_path.is_file():
 			raise FileNotFoundError(f"{config_path} is listed in the manifest but is missing.")
+		if not (config_path.parent / "raw" / "diagnostic.json").is_file():
+			raise FileNotFoundError(
+				f"Recording {config_path.parent.name!r} has no raw/diagnostic.json, which the "
+				"analysis now needs for its recording boundaries and interpolated reads. Add "
+				"it again with its <name>.diagnostic.json, passing overwrite=True."
+			)
 
 		recording = Recording.from_config(
 			json.loads(config_path.read_text(encoding="utf-8")),
@@ -1324,14 +1566,13 @@ class Project(BaseModel):
 		recording._root = config_path.parent
 		return recording
 
-	def _save(self) -> Path:
+	def _save(self) -> None:
 		"""Write the pointer manifest to <project_location>/project.json."""
 		path = self.project_location / self.MANIFEST
 		tmp = path.with_suffix(".json.tmp")
 		tmp.write_text(self.model_dump_json(indent=2), encoding="utf-8")
 		tmp.replace(path)
 		self.log.info("saved manifest (%d recordings)", len(self.data_catalog))
-		return path
 
 	@property
 	def log(self) -> logging.Logger:

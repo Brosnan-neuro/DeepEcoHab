@@ -1,7 +1,7 @@
 import json
 import math
 from collections import Counter, deque
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from html import escape
 from typing import Any
 from urllib.parse import quote
@@ -154,7 +154,8 @@ def format_dialog(prefix: str, note: str, props: dict[str, dict] | None = None) 
 		prefix: ids are ``{prefix}-format-modal``, ``{prefix}-fmt`` (one per field key)
 			and ``{prefix}-fmt-reset``.
 		note: the line under the fields.
-		props: each field's props by key; a ``"title"`` entry adds a plot title field.
+		props: each field's props by key; a ``"title"`` entry adds a plot title field,
+			a ``"sharey"`` one a shared y axis switch.
 
 	Returns:
 		The dialog, kept mounted so props set while it is closed survive opening it.
@@ -176,7 +177,7 @@ def format_dialog(prefix: str, note: str, props: dict[str, dict] | None = None) 
 	def bound(key: str, label: str) -> dmc.NumberInput:
 		return field(dmc.NumberInput, key, label, debounce=True, hideControls=True)
 
-	def select(key: str, label: str, choices: dict) -> dmc.Select:
+	def select(key: str, label: str, choices: Iterable[str]) -> dmc.Select:
 		return field(dmc.Select, key, label, data=list(choices), clearable=True)
 
 	return dmc.Modal(
@@ -208,6 +209,11 @@ def format_dialog(prefix: str, note: str, props: dict[str, dict] | None = None) 
 					),
 					select("colorscale", "Colour scale", COLORSCALES),
 					select("palette", "Category palette", PALETTES),
+					*(
+						[select("sharey", "Shared y axis", ["True", "False"])]
+						if "sharey" in props
+						else []
+					),
 					html.P(note, className="deh-sub"),
 				],
 				className="deh-dialog-body",
@@ -589,7 +595,24 @@ def _look_vars(look: int) -> dict[str, str]:
 	}
 
 
-def _habitat_svg(layout: Layout, label: str, antenna_miss: dict[str, float] | None) -> str:
+def _antenna_pop(title: str, stats: dict | None) -> str:
+	"""An antenna's popover body, escaped, for ``deh`` to set as the popover's innerHTML."""
+	rows = (
+		(
+			("Correct", f"{stats['correct']:,}"),
+			("Interpolated", f"{stats['interpolated']:,}"),
+			("Bad", f"{stats['bad']:,}"),
+			("Missed", f"{stats['miss']:.2f}%"),
+		)
+		if stats
+		else ()
+	)
+	return f"<b>{escape(title)}</b>" + "".join(
+		f"<span>{name}</span><span>{value}</span>" for name, value in rows
+	)
+
+
+def _habitat_svg(layout: Layout, label: str, antenna_stats: dict[str, dict] | None) -> str:
 	"""The habitat as one SVG element, for ``deh.paintHabitat`` to paint in.
 
 	Every interpolated piece comes from a hand-editable ``config.json`` and this string is
@@ -621,14 +644,13 @@ def _habitat_svg(layout: Layout, label: str, antenna_miss: dict[str, float] | No
 			(_habitat_mouth(bx, by, ax - bx, ay - by), tunnel.end_cell_id),
 		)
 		for ((px, py), cell), antenna in zip(ends, tunnel.antennas, strict=False):
-			miss = (antenna_miss or {}).get(str(antenna))
-			band = _habitat_band(miss)
+			stats = (antenna_stats or {}).get(str(antenna))
+			band = _habitat_band(stats["miss"] if stats else None)
 			title = f"Antenna {antenna} · {cages[cell].name} end of {tunnel.name}"
-			if miss is not None:
-				title += f" · {miss:.2f}% missed passes"
 			antennas.append(
-				f'<g class="deh-hab-ant{f" {band}" if band else ""}">'
-				f"<title>{escape(title)}</title>"
+				f'<g class="deh-hab-ant{f" {band}" if band else ""}" tabindex="0" '
+				f'role="button" aria-label="{escape(title)}" '
+				f'data-pop="{escape(_antenna_pop(title, stats))}">'
 				f'<circle cx="{px:.2f}" cy="{py:.2f}" r="11"/>'
 				f'<text x="{px:.2f}" y="{py:.2f}">{escape(str(antenna))}</text></g>'
 			)
@@ -671,7 +693,7 @@ def habitat_map(
 	layout: Layout,
 	label: str,
 	*,
-	antenna_miss: dict[str, float] | None = None,
+	antenna_stats: dict[str, dict] | None = None,
 	height: int | None = None,
 ) -> list:
 	"""The habitat a recording was made in, as an SVG map and its legend.
@@ -684,16 +706,17 @@ def habitat_map(
 	Args:
 		layout: the validated habitat, as ``config.json`` lays it out.
 		label: the SVG's accessible name, e.g. ``"Habitat of 2024-05-02"``.
-		antenna_miss: missed-pass percentage per antenna, which tints each one on the same
-			bands as the header's quality badge and adds its rate to the tooltip. Without it
-			every antenna draws plain, which is what a recording with no results shows.
+		antenna_stats: ``correct`` / ``interpolated`` / ``bad`` passes and ``miss`` percentage
+			per antenna. ``miss`` tints each one on the same bands as the header's quality
+			badge, and all four fill the popover a click on it opens. Without it every antenna
+			draws plain, which is what a recording with no results shows.
 		height: map height in px; the CSS falls back to 300px.
 	"""
 	return [
 		html.Div(
 			className="deh-hab",
 			style={"height": f"{height}px"} if height else {},
-			**{"data-hab": _habitat_svg(layout, label, antenna_miss)},  # ty: ignore[invalid-argument-type]
+			**{"data-hab": _habitat_svg(layout, label, antenna_stats)},  # ty: ignore[invalid-argument-type]
 		),
 		html.Div(
 			[
@@ -702,7 +725,7 @@ def habitat_map(
 			]
 			+ [
 				html.Span([html.I(className=f"deh-hab-key {modifier}"), name])
-				for modifier, name in _HAB_KEYS + (_HAB_BAND_KEYS if antenna_miss else ())
+				for modifier, name in _HAB_KEYS + (_HAB_BAND_KEYS if antenna_stats else ())
 			],
 			className="deh-hab-legend",
 		),

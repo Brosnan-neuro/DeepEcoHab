@@ -1,10 +1,12 @@
 import datetime as dt
+import json
 import math
 from itertools import pairwise
 from urllib.parse import parse_qs, quote, urlencode
 
 import dash
 import dash_mantine_components as dmc
+import plotly.graph_objects as go
 from dash import (
 	ALL,
 	MATCH,
@@ -34,6 +36,8 @@ from deepecohab.core.data_model import (
 from deepecohab.plotting import PlotContext, PlotRegistry, available_attributes, theme as plot_theme
 from deepecohab.plotting.animals import resolve_colors
 from deepecohab.plotting.plot_catalog import PHASES
+from deepecohab.plotting.plot_factory import FACETS_PER_LINE
+from deepecohab.plotting.prepare import READ_KINDS
 from deepecohab.plotting.theme import COLORSCALES, PALETTES
 
 PATH = "/recording"
@@ -161,8 +165,12 @@ layout = html.Div(
 		# static layout would be dispatched before it exists ("a nonexistent object was used
 		# in an Input"). switchTab mirrors the tab here, where plotRequest can always see it.
 		dcc.Store(id="rec-tab"),
+		# The tab the pointer rests on, as {tab, at}, for plotRequest to prefetch.
+		dcc.Store(id="rec-hover"),
 		# What the cohort cards were drawn for: _dashboard bakes them for animal_id.
 		dcc.Store(id="rec-color-by", data="animal_id"),
+		# The timeline's zoomed x range, or null for its whole window.
+		dcc.Store(id="rec-timeline-zoom"),
 		dcc.Store(id="notes-target"),
 		dcc.Store(id="rec-format", storage_type="session"),
 		dcc.Store(id="rec-format-target"),
@@ -176,11 +184,13 @@ layout = html.Div(
 			title="",
 			fullScreen=True,
 			classNames=components.DIALOG_CLASSES,
-			children=dcc.Graph(
-				id="fullscreen-plot",
-				figure=components.EMPTY_FIGURE,
-				config={"displayModeBar": False},
-				style={"height": "calc(100vh - 120px)"},
+			children=html.Div(
+				dcc.Graph(
+					id="fullscreen-plot",
+					figure=components.EMPTY_FIGURE,
+					config={"displayModeBar": False},
+				),
+				id="fullscreen-frame",
 			),
 		),
 		dmc.Modal(
@@ -225,6 +235,33 @@ def _reads(tables: tuple[str, ...]) -> list:
 	return children
 
 
+def _card_head(title: str, blurb, *, maximize: bool = False) -> html.Div:
+	# The card itself fills the window (deh-card-max in clientside.js) rather than a copy in a
+	# modal, so its table rows and map stay the live, clickable ones.
+	button = html.Button(
+		[icon("maximize", size=15), icon("x", size=15)],
+		className="deh-icon-btn sm deh-card-max",
+		title=f"Open {title} full screen",
+	)
+	return html.Div(
+		[
+			html.Div([html.H3(title), html.P(blurb)], className="deh-card-titles"),
+			html.Div(button, className="deh-card-actions") if maximize else None,
+		],
+		className="deh-card-head",
+	)
+
+
+def _needs(*tables: str, hint: str | None = None) -> html.Div:
+	return html.Div(
+		[
+			icon("database", size=22),
+			html.Div([html.B(["Needs ", *_reads(tables)[1:]]), hint and html.P(hint)]),
+		],
+		className="deh-missing-body",
+	)
+
+
 def _quality_badge(miss: float) -> html.Span:
 	if miss < 1:
 		kind, glyph, label = "good", "circle-check", "Good"
@@ -238,142 +275,94 @@ def _quality_badge(miss: float) -> html.Span:
 def _meta_strip(summary: dict) -> list:
 	start = dt.datetime.fromisoformat(summary["start"])
 	end = dt.datetime.fromisoformat(summary["end"])
-	items = [
-		html.Span(
-			[icon("calendar", size=15), f"{start.day} {start:%b} → {end.day} {end:%b %Y}"],
-			title=(
-				f"Start: {start:%a} {start.day} {start:%b %Y, %H:%M:%S}\n"
-				f"End: {end:%a} {end.day} {end:%b %Y, %H:%M:%S}\n"
-				f"Time zone: {summary['timezone']}"
-			),
-		),
-		*(
-			[html.Span([icon("map-pin", size=15), summary["location"]], title="Recording location")]
-			if summary["location"]
-			else []
-		),
-		html.Span(
-			[
-				icon("clock", size=15),
-				(
-					f"{summary['days']} days · {summary['phases']} phases, "
-					f"from {_human(summary['start_from'])}"
-				),
-			],
-			title="\n".join(
-				f"{_human(phase).capitalize()} onset: {at}"
-				for phase, at in summary["onsets"].items()
-			),
-		),
-		html.Button(
-			[icon("users", size=15), f"{summary['n_mice']} mice"],
-			id="rec-mice-jump",
-			className="deh-btn deh-btn-ghost sm",
-			title="Show the cohort",
-		),
-		html.Button(
-			[
-				icon("grid-dots", size=15),
-				f"{summary['cages']} cages · {summary['tunnels']} tunnels",
-			],
-			id="rec-habitat-jump",
-			className="deh-btn deh-btn-ghost sm",
-			title="Show the habitat map",
-		),
-		html.Button(
-			[icon("bolt", size=15), f"{len(summary['events'])} events"],
-			id="rec-events-jump",
-			className="deh-btn deh-btn-ghost sm",
-			title=", ".join(summary["events"]) or "No events",
-			disabled=not summary["events"],
-		),
-	]
 	quality = summary["quality"]
-	if quality is not None:
-		items.append(
-			html.Button(
-				[f"{quality['miss']:.2f}% missed ", _quality_badge(quality["miss"])],
-				id="rec-quality-jump",
-				className="deh-btn deh-btn-ghost sm",
+	# Grouped by what they answer (when / where and who / what to follow up), so a narrow
+	# header wraps between groups rather than through one.
+	groups = [
+		[
+			html.Span(
+				[icon("calendar", size=15), f"{start.day} {start:%b} → {end.day} {end:%b %Y}"],
 				title=(
-					f"Worst antenna {quality['worst_antenna']['antenna']}: "
-					f"{quality['worst_antenna']['miss']:.2f}% missed"
+					f"Start: {start:%a} {start.day} {start:%b %Y, %H:%M:%S}\n"
+					f"End: {end:%a} {end.day} {end:%b %Y, %H:%M:%S}\n"
+					f"Time zone: {summary['timezone']}"
 				),
-			)
-		)
-	items.append(
-		html.Button(
-			[icon("notes", size=15), "Notes"],
-			id="rec-notes-btn",
-			className="deh-btn deh-btn-ghost sm",
-		)
-	)
-	return items
-
-
-def _window_marks(lo: int, hi: int) -> list[dmc.RangeSlider.Marks]:
-	step = 2 if hi - lo + 1 > 12 else 1
-	return [
-		{"value": v, "label": str(v)} for v in range(lo, hi + 1) if (v - lo) % step == 0 or v == hi
+			),
+			html.Span(
+				[
+					icon("clock", size=15),
+					f"{summary['days']} days · {summary['phases']} phases",
+				],
+				title="\n".join(
+					[
+						f"Starts with the {_human(summary['start_from'])}",
+						*(
+							f"{_human(phase).capitalize()} onset: {at}"
+							for phase, at in summary["onsets"].items()
+						),
+					]
+				),
+			),
+		],
+		[
+			*(
+				[
+					html.Span(
+						[icon("map-pin", size=15), summary["location"]], title="Recording location"
+					)
+				]
+				if summary["location"]
+				else []
+			),
+			html.Button(
+				[icon("users", size=15), f"{summary['n_mice']} mice"],
+				id="rec-mice-jump",
+				className="deh-btn deh-btn-ghost sm",
+				title="Show the cohort",
+			),
+			html.Button(
+				[
+					icon("grid-dots", size=15),
+					f"{summary['cages']} cages · {summary['tunnels']} tunnels",
+				],
+				id="rec-habitat-jump",
+				className="deh-btn deh-btn-ghost sm",
+				title="Show the habitat map",
+			),
+		],
+		[
+			html.Button(
+				[icon("bolt", size=15), f"{len(summary['events'])} events"],
+				id="rec-events-jump",
+				className="deh-btn deh-btn-ghost sm",
+				title=", ".join(summary["events"]) or "No events",
+				disabled=not summary["events"],
+			),
+			*(
+				[
+					html.Button(
+						[f"{quality['miss']:.2f}% missed ", _quality_badge(quality["miss"])],
+						id="rec-quality-jump",
+						className="deh-btn deh-btn-ghost sm",
+					)
+				]
+				if quality is not None
+				else []
+			),
+			html.Button(
+				[icon("notes", size=15), "Notes"],
+				id="rec-notes-btn",
+				className="deh-btn deh-btn-ghost sm",
+			),
+		],
 	]
-
-
-def _clock(summary: dict, hour: int) -> str:
-	base_h, base_m = (int(part) for part in summary["onsets"][summary["start_from"]].split(":"))
-	total = (base_h * 60 + base_m + hour * 60) % 1440
-	return f"{total // 60:02d}:{total % 60:02d}"
+	return [html.Div(group, className="deh-meta-group") for group in groups]
 
 
 def _shade(phase: str, selected: bool) -> str:
-	"""One phase's colour for the hours band, dimmed when the chips have turned it off."""
+	"""One phase's colour for a band, dimmed when the chips have turned it off."""
 	token = "--tick-dark" if phase == "dark_phase" else "--tick-light"
 	return f"color-mix(in srgb, var({token}) {100 if selected else 22}%, transparent)"
-
-
-def _hours_band(summary: dict, phases: list[str]) -> tuple[str, str]:
-	"""The hours slider's band as a CSS gradient, and the hover text naming its stretches.
-
-	``hour`` counts from the ``start_from`` onset, so each phase is one unbroken stretch
-	and the band never has to wrap around midnight. The slider runs over hour boundaries,
-	``h`` at ``h / 24`` of the track, so the split sits under the other onset's tick.
-	"""
-	onsets, start = summary["onsets"], summary["start_from"]
-	other = next((name for name in onsets if name != start), None)
-	if other is None:
-		return _shade(start, start in phases), _human(start)
-
-	minutes = {name: int(at[:2]) * 60 + int(at[3:5]) for name, at in onsets.items()}
-	first = ((minutes[other] - minutes[start]) % 1440) / 60
-	split = 100 * first / 24
-	edge = round(first)
-
-	return (
-		(
-			f"linear-gradient(90deg, {_shade(start, start in phases)} 0 {split}%, "
-			f"{_shade(other, other in phases)} {split}% 100%)"
-		),
-		(
-			f"{_human(start)} {_clock(summary, 0)}-{_clock(summary, edge)} · "
-			f"{_human(other)} {_clock(summary, edge)}-{_clock(summary, 24)}"
-		),
-	)
-
-
-def _window_text(bound: int, granularity: str, window: list[int]) -> tuple[str, str]:
-	"""The label above the window slider, and the hint on its right."""
-	lo, hi = window
-	unit = "Days" if granularity == "day" else "Phases"
-	span = f"all {bound}" if [lo, hi] == [1, bound] else f"{hi - lo + 1} of {bound}"
-
-	return f"{unit} {lo} → {hi}", span
-
-
-def _hours_text(hours: list[int]) -> tuple[str, str]:
-	"""The label above the hours slider, and the hint on its right."""
-	lo, hi = hours
-	span = "whole day" if [lo, hi] == [0, 23] else f"{hi - lo + 1} of 24 h"
-
-	return f"Hours {lo} → {hi + 1}", span
 
 
 def _cohort_widgets(context: PlotContext, color_by: str) -> tuple[list, html.Div]:
@@ -479,7 +468,10 @@ def _plot_card(name: str, context: PlotContext, height: int, tab: str) -> list:
 		)
 		for key, (glyph, label, tooltip) in _BADGES.items()
 		# Group mean only means something to a card that colours by animal at all.
-		if key not in uses and (key != "group_mean" or "color_by" in uses)
+		if key not in uses
+		and (key != "group_mean" or "color_by" in uses)
+		# The phase chips set the hours window, so an hour-aware card follows them too.
+		and (key != "phases" or "hours" not in uses)
 	]
 	header = html.Div(
 		[
@@ -538,18 +530,7 @@ def _plot_card(name: str, context: PlotContext, height: int, tab: str) -> list:
 	)
 
 	if missing:
-		body = html.Div(
-			[
-				icon("database", size=22),
-				html.Div(
-					[
-						html.B(["Needs ", *_reads(tuple(missing))[1:]]),
-						html.P("Run analysis for this recording to build it."),
-					]
-				),
-			],
-			className="deh-missing-body",
-		)
+		body = _needs(*missing, hint="Run analysis for this recording to build it.")
 		return [header, body, html.Footer(_reads(spec.requires), className="deh-card-foot")]
 
 	options = [option for option in spec.options if option.name not in _GLOBAL_OPTIONS]
@@ -576,33 +557,16 @@ def _plot_card(name: str, context: PlotContext, height: int, tab: str) -> list:
 
 
 def _overview_summary_children(context: PlotContext) -> list:
-	header = html.Div(
-		html.Div(
-			[
-				html.H3("Recording at a glance"),
-				html.P(
-					"What this recording amounts to: how long it ran, how many detections, "
-					"and where the cohort spent its time."
-				),
-			],
-			className="deh-card-titles",
-		),
-		className="deh-card-head",
+	header = _card_head(
+		"Recording at a glance",
+		"What this recording amounts to: how long it ran, how many detections, "
+		"and where the cohort spent its time.",
 	)
-	tiles = services.overview_tiles(context)
-	body = html.Div(
+	body = _tiles(
 		[
-			html.Div(
-				[
-					html.Span(tile["label"], className="deh-tile-label"),
-					html.Span(tile["value"], className="deh-tile-value"),
-					html.Span(tile["note"], className="deh-sub"),
-				],
-				className="deh-tile",
-			)
-			for tile in tiles
-		],
-		className="deh-tiles",
+			(tile["label"], tile["value"], html.Span(tile["note"], className="deh-sub"))
+			for tile in services.overview_tiles(context)
+		]
 	)
 	reads = [table for table in ("main_df", "activity_df", "chasings_df") if table in context]
 
@@ -610,47 +574,26 @@ def _overview_summary_children(context: PlotContext) -> list:
 
 
 def _quality_summary_children(context: PlotContext) -> list:
-	header = html.Div(
-		html.Div(
-			[
-				html.H3("Detection quality"),
-				html.P(
-					"Passes the antennas should have caught but did not. An animal that turns up "
-					"at an antenna the layout does not join to its previous one crossed antennas "
-					"that never fired."
-				),
-			],
-			className="deh-card-titles",
-		),
-		className="deh-card-head",
+	header = _card_head(
+		"Detection quality",
+		"Passes the antennas should have caught but did not, whether preprocessing "
+		"interpolated them or they stay unresolved: an animal that turns up at an antenna "
+		"the layout does not join to its previous one crossed antennas that never fired.",
 	)
 	if "recording_quality" not in context:
-		body = html.Div(
-			[
-				icon("database", size=22),
-				html.Div(html.B(["Needs ", html.Code("recording_quality")])),
-			],
-			className="deh-missing-body",
-		)
-		return [header, body]
+		return [header, _needs("recording_quality")]
 
+	assert context.recording is not None
 	quality = services.quality_summary(context)
 	tiles = [
 		("Missed passes", f"{quality['miss']:.2f}%", _quality_badge(quality["miss"])),
 		(
-			"Detections",
-			f"{quality['detected']:,}",
-			html.Span(f"{quality['missed']:,} missed", className="deh-sub"),
-		),
-		(
-			"Worst antenna",
-			f"Antenna {quality['worst_antenna']['antenna']}",
-			html.Span(f"{quality['worst_antenna']['miss']:.2f}% missed", className="deh-sub"),
-		),
-		(
-			"Worst animal",
-			quality["worst_animal"]["animal_id"],
-			html.Span(f"{quality['worst_animal']['miss']:.2f}% missed", className="deh-sub"),
+			"Correct reads",
+			f"{quality['correct']:,}",
+			html.Span(
+				f"{quality['interpolated']:,} interpolated · {quality['bad']:,} bad",
+				className="deh-sub",
+			),
 		),
 	]
 	if "activity_df" in context and "phase_durations" in context:
@@ -666,9 +609,14 @@ def _quality_summary_children(context: PlotContext) -> list:
 				),
 			),
 		)
-	if context.recording:
-		tiles += _window_tiles(context.recording.timeline)
-	body = html.Div(
+	gaps = _gaps(context.recording)
+	tiles += [*_window_tiles(context.recording.timeline), _gap_tile(gaps)]
+	strip = _gap_strip(context.recording.timeline, gaps) if gaps else None
+	return [header, _tiles(tiles), strip]
+
+
+def _tiles(rows: list) -> html.Div:
+	return html.Div(
 		[
 			html.Div(
 				[
@@ -678,11 +626,10 @@ def _quality_summary_children(context: PlotContext) -> list:
 				],
 				className="deh-tile",
 			)
-			for label, value, aside in tiles
+			for label, value, aside in rows
 		],
 		className="deh-tiles",
 	)
-	return [header, body]
 
 
 def _span(delta: dt.timedelta, rounding=math.ceil) -> str:
@@ -708,7 +655,9 @@ def _window_note(gap: dt.timedelta, text: str, hover: str) -> html.Span:
 def _window_tiles(line: Timeline) -> list[tuple]:
 	"""Acquisition start and end on the clock, each noted with how far it is off the phase grid."""
 	onset = f"the {line.phases[line.start_from]:%H:%M} {_human(line.start_from)} onset"
-	early, late, tail = line.discarded_lead, line.unrecorded_lead, line.unrecorded_tail
+	early, late = line.discarded_lead, line.unrecorded_lead
+	cut, tail = line.discarded_tail, line.unrecorded_tail
+	closing = f"the end of the {_human(line.end_with)}"
 	if early:
 		start = _window_note(
 			early,
@@ -724,13 +673,20 @@ def _window_tiles(line: Timeline) -> list[tuple]:
 		)
 	else:
 		start = _window_note(late, "on the onset", f"Started on {onset}.")
-	end = _window_note(
-		tail,
-		f"{_span(tail)} short" if tail else "on an onset",
-		f"Ended {_span(tail)} before the next phase onset; the last phase is short by as much."
-		if tail
-		else "Ended on a phase onset.",
-	)
+	if cut:
+		end = _window_note(
+			cut,
+			f"{_span(cut)} lost",
+			f"Ended {_span(cut)} after {closing}; what was recorded after it is left out.",
+		)
+	elif tail:
+		end = _window_note(
+			tail,
+			f"{_span(tail)} short",
+			f"Ended {_span(tail)} before {closing}; the last phase is short by as much.",
+		)
+	else:
+		end = _window_note(tail, "on an onset", f"Ended on {closing}.")
 	zone = line.recording_timezone
 	return [
 		("Recording start", f"{line.start_datetime.astimezone(zone):%H:%M}", start),
@@ -738,16 +694,85 @@ def _window_tiles(line: Timeline) -> list[tuple]:
 	]
 
 
-def _events_card_children(recording: Recording) -> list:
-	"""Every bout on one strip across the recording, then each event's bouts in full.
+#: What each kind of recording gap means. A clean stop is not a failure.
+_GAP_KINDS = {
+	"abrupt_end": "Acquisition ended abruptly",
+	"observed_record_gap": "Nothing recorded, cause unknown",
+	"confirmed_DAQ_inactive": "Acquisition stopped and restarted cleanly",
+}
 
-	Drawn from the config alone, as the habitat map is, so it renders before analysis. An
-	event's colour is its place among the recording's events, the rule ``_event_spans``
-	colours spans by, so a bar here matches its span on every plot. Days and phases are
-	counted the way the window slider counts them: 24 elapsed hours from the experiment start.
+
+def _gaps(recording: Recording) -> list[tuple[dt.datetime, dt.datetime, str]]:
+	"""The recording's gaps as (start, end, kind), clipped to the analysed window."""
+	begin, stop = recording.timeline.local_span
+	return [
+		(max(gap.start, begin), min(gap.end, stop), gap.kind)
+		for gap in recording.boundaries
+		if gap.end > begin and gap.start < stop
+	]
+
+
+def _gap_tile(gaps: list[tuple[dt.datetime, dt.datetime, str]]) -> tuple:
+	"""How often acquisition stopped and for how long.
+
+	Poor past 12 h lost, otherwise warned of unless every stop was clean.
 	"""
-	line = recording.timeline
+	if not gaps:
+		return ("Recording gaps", "0", html.Span("recorded without a break", className="deh-sub"))
+	lost = sum((end - start for start, end, _ in gaps), dt.timedelta())
+	failed = sum(kind != "confirmed_DAQ_inactive" for *_, kind in gaps)
+	text = f"{_span(lost)} lost"
+	note = html.Span(text, className="deh-sub")
+	if lost > dt.timedelta(hours=12) or failed:
+		kind, glyph = (
+			("bad", "circle-x") if lost > dt.timedelta(hours=12) else ("warn", "alert-triangle")
+		)
+		note = html.Span(
+			[icon(glyph, size=14), text],
+			className=f"deh-badge deh-badge-{kind}",
+			title=f"{failed} of {len(gaps)} were not a clean stop and restart.",
+		)
+	return ("Recording gaps", str(len(gaps)), note)
+
+
+def _gap_strip(line: Timeline, gaps: list[tuple[dt.datetime, dt.datetime, str]]) -> html.Div:
+	"""Each gap as a bar on the phase-tinted strip the events card draws, coloured by kind."""
 	zone = line.recording_timezone
+	place, day_phase, band, axis = _strip_scale(line)
+	bars = []
+	for start, end, kind in gaps:
+		meaning = _GAP_KINDS[kind]
+		onset, offset = start.astimezone(zone), end.astimezone(zone)
+		bars.append(
+			html.Span(
+				className="deh-ev-bar",
+				style={
+					**place(onset, offset),
+					"background": "var(--bad)",
+				},
+				title=(
+					f"{day_phase(onset)}\n{onset.day} {onset:%b %H:%M} → "
+					f"{offset.day} {offset:%b %H:%M} ({_span(end - start)})\n{meaning}"
+				),
+			)
+		)
+	lane = [
+		html.Span("Gaps", className="deh-ev-label"),
+		html.Div(bars, className="deh-ev-track", style={"background": band(False)}),
+	]
+	return html.Div([*lane, *axis], className="deh-ev-strip")
+
+
+def _strip_scale(line: Timeline) -> tuple:
+	"""A strip across the analysed window, as ``(place, day_phase, band, axis)``.
+
+	``place`` positions a bar from onset to offset, held 3px off the track's rounded ends so
+	one at the recording's start or end does not sit flush with them. ``day_phase`` names a
+	moment's day and phase, ``band`` tints a lane by phase and ``axis`` is the Day row that
+	closes the strip.
+	Days and phases are counted the way the window slider counts them: 24 elapsed hours from
+	the experiment start.
+	"""
 	start, end = line.local_span
 	origin = start.astimezone(dt.UTC)
 	length = end.astimezone(dt.UTC) - origin
@@ -759,6 +784,17 @@ def _events_card_children(recording: Recording) -> list:
 	def at(moment: dt.datetime) -> float:
 		return 100 * ((moment.astimezone(dt.UTC) - origin) / length)
 
+	def place(onset: dt.datetime, offset: dt.datetime) -> dict:
+		return {
+			"left": f"max(3px, {at(onset):.3f}%)",
+			"right": f"max(3px, {100 - at(offset):.3f}%)",
+		}
+
+	def day_phase(moment: dt.datetime) -> str:
+		day = (moment.astimezone(dt.UTC) - origin) // dt.timedelta(days=1) + 1
+		phase = next(name for switch, name in reversed(stretches) if switch <= moment)
+		return f"Day {day} · {_human(phase).removesuffix(' phase')}"
+
 	edges = [at(moment) for moment, _ in stretches] + [100.0]
 
 	def band(selected: bool) -> str:
@@ -768,15 +804,41 @@ def _events_card_children(recording: Recording) -> list:
 		)
 		return f"linear-gradient(90deg, {stops})"
 
+	days = line.days_range[1]
+	step = 2 if days > 12 else 1
+	day_edges = [min(at(origin + dt.timedelta(days=d)), 100.0) for d in range(days + 1)]
+	ticks = [
+		html.Span(str(d), className="deh-ev-day", style={"left": f"{(lo + hi) / 2:.3f}%"})
+		for d, (lo, hi) in enumerate(pairwise(day_edges), start=1)
+		if hi > lo and (d - 1) % step == 0
+	] + [html.I(className="deh-ev-tick", style={"left": f"{x:.3f}%"}) for x in day_edges[1:-1]]
+	axis = [
+		html.Span("Day", className="deh-ev-label deh-sub"),
+		html.Div(
+			[html.Div(className="deh-ev-band", style={"background": band(True)}), *ticks],
+			className="deh-ev-axis",
+		),
+	]
+	return place, day_phase, band, axis
+
+
+def _events_card_children(recording: Recording) -> list:
+	"""Every bout on one strip across the recording, then each event's bouts in full.
+
+	Drawn from the config alone, as the habitat map is, so it renders before analysis. An
+	event's colour is its place among the recording's events, the rule ``_event_spans``
+	colours spans by, so a bar here matches its span on every plot.
+	"""
+	zone = recording.timeline.recording_timezone
+	place, day_phase, band, axis = _strip_scale(recording.timeline)
+
 	lanes, groups = [], []
 	for index, event in enumerate(recording.events):
 		color = qualitative.Pastel[index % len(qualitative.Pastel)]
 		bars, rows = [], []
 		for bout in sorted(event.bouts, key=lambda bout: bout.start):
 			onset, offset = bout.start.astimezone(zone), bout.end.astimezone(zone)
-			day = (onset.astimezone(dt.UTC) - origin) // dt.timedelta(days=1) + 1
-			phase = next(name for switch, name in reversed(stretches) if switch <= onset)
-			when = f"Day {day} · {_human(phase).removesuffix(' phase')}"
+			when = day_phase(onset)
 			duration = _span(offset.astimezone(dt.UTC) - onset.astimezone(dt.UTC))
 			where = ", ".join(map(_human, bout.position)) if bout.position else "Whole habitat"
 			ends = (
@@ -788,8 +850,7 @@ def _events_card_children(recording: Recording) -> list:
 				html.Span(
 					className="deh-ev-bar",
 					style={
-						"left": f"{at(onset):.3f}%",
-						"width": f"{at(offset) - at(onset):.3f}%",
+						**place(onset, offset),
 						"background": color,
 					},
 					title=(
@@ -839,6 +900,8 @@ def _events_card_children(recording: Recording) -> list:
 									html.Span(event.description, className="deh-sub"),
 								],
 								className="deh-ev-label",
+								role="button",
+								tabIndex=0,
 							),
 							colSpan=5,
 						),
@@ -849,44 +912,18 @@ def _events_card_children(recording: Recording) -> list:
 			)
 		)
 
-	days = line.days_range[1]
-	step = 2 if days > 12 else 1
-	day_edges = [min(at(origin + dt.timedelta(days=d)), 100.0) for d in range(days + 1)]
-	ticks = [
-		html.Span(str(d), className="deh-ev-day", style={"left": f"{(lo + hi) / 2:.3f}%"})
-		for d, (lo, hi) in enumerate(pairwise(day_edges), start=1)
-		if hi > lo and (d - 1) % step == 0
-	] + [html.I(className="deh-ev-tick", style={"left": f"{x:.3f}%"}) for x in day_edges[1:-1]]
-
 	count, kinds = sum(len(event.bouts) for event in recording.events), len(recording.events)
 	tally = f"{count} bout{'s' * (count != 1)} of {kinds} event{'s' * (kinds != 1)}"
-	header = html.Div(
-		html.Div(
-			[
-				html.H3("Events"),
-				html.P(
-					[
-						f"{tally}, as ",
-						html.Code("config.json"),
-						" declares them, over the light and dark phases they fell in.",
-					]
-				),
-			],
-			className="deh-card-titles",
-		),
-		className="deh-card-head",
-	)
-	strip = html.Div(
+	header = _card_head(
+		"Events",
 		[
-			*lanes,
-			html.Span("Day", className="deh-ev-label deh-sub"),
-			html.Div(
-				[html.Div(className="deh-ev-band", style={"background": band(True)}), *ticks],
-				className="deh-ev-axis",
-			),
+			f"{tally}, as ",
+			html.Code("config.json"),
+			" declares them, over the light and dark phases they fell in.",
 		],
-		className="deh-ev-strip",
+		maximize=True,
 	)
+	strip = html.Div([*lanes, *axis], className="deh-ev-strip")
 	table = html.Table(
 		[
 			html.Thead(
@@ -914,26 +951,19 @@ def _events_card_children(recording: Recording) -> list:
 
 
 def _quality_missing_children(context: PlotContext, color_by: str) -> list:
-	header = html.Div(
-		html.Div(
-			[
-				html.H3("Position unknown"),
-				html.P("Time each animal spent at a position antennas could not resolve."),
-			],
-			className="deh-card-titles",
-		),
-		className="deh-card-head",
+	header = _card_head(
+		"Position unknown",
+		"Time each animal spent at a position antennas could not resolve, and how its "
+		"passes were caught.",
+		maximize=True,
 	)
-	needed = ("activity_df", "phase_durations")
+	needed = ("activity_df", "phase_durations", "recording_quality")
 	missing = [table for table in needed if table not in context]
 	if missing:
-		body = html.Div(
-			[icon("database", size=22), html.Div(html.B(["Needs ", *_reads(tuple(missing))[1:]]))],
-			className="deh-missing-body",
-		)
-		return [header, body, html.Footer(_reads(needed), className="deh-card-foot")]
+		return [header, _needs(*missing), html.Footer(_reads(needed), className="deh-card-foot")]
 
 	result = services.missing_time(context)
+	reads = services.reads_by_animal(context)
 	subjects = (
 		{row["animal_id"]: row["subject_name"] for row in context.animals.iter_rows(named=True)}
 		if "animals" in context
@@ -950,6 +980,10 @@ def _quality_missing_children(context: PlotContext, color_by: str) -> list:
 				html.Td(subjects.get(row["animal_id"], "—")),
 				html.Td(row["time_in_position_text"]),
 				html.Td(f"{row['share']:.2f}%", className="num"),
+				*(
+					html.Td(f"{reads[row['animal_id']][kind]:,}", className="num")
+					for kind in READ_KINDS
+				),
 			]
 		)
 		for row in result["rows"]
@@ -957,8 +991,12 @@ def _quality_missing_children(context: PlotContext, color_by: str) -> list:
 	rows.append(
 		html.Tr(
 			[
-				html.Td("Cohort mean", colSpan=4),
+				html.Td("Cohort mean · total", colSpan=4),
 				html.Td(f"{result['mean_share']:.2f}%", className="num"),
+				*(
+					html.Td(f"{sum(animal[kind] for animal in reads.values()):,}", className="num")
+					for kind in READ_KINDS
+				),
 			]
 		)
 	)
@@ -972,6 +1010,7 @@ def _quality_missing_children(context: PlotContext, color_by: str) -> list:
 						html.Th("Subject"),
 						html.Th("Time unknown"),
 						html.Th("% of recording", className="num"),
+						*(html.Th(kind.capitalize(), className="num") for kind in READ_KINDS),
 					]
 				)
 			),
@@ -989,67 +1028,42 @@ def _quality_missing_children(context: PlotContext, color_by: str) -> list:
 
 
 def _habitat_card_children(context: PlotContext, height: int) -> list:
-	layout = context.recording.layout if context.recording else None
-	header = html.Div(
-		html.Div(
-			[
-				html.H3("Habitat"),
-				html.P(
-					[
-						f"{len(layout.cages)} cages, {len(layout.tunnels)} tunnels and ",
-						f"{len(topology.antennas(layout.antenna_combinations))} antennas, as ",
-						html.Code("config.json"),
-						" lays them out. Antennas are tinted by missed passes.",
-					]
-					if layout
-					else "The habitat this recording was made in."
-				),
-			],
-			className="deh-card-titles",
-		),
-		className="deh-card-head",
+	assert context.recording is not None
+	layout = context.recording.layout
+	header = _card_head(
+		"Habitat",
+		[
+			f"{len(layout.cages)} cages, {len(layout.tunnels)} tunnels and ",
+			f"{len(topology.antennas(layout.antenna_combinations))} antennas, as ",
+			html.Code("config.json"),
+			" lays them out. Antennas are tinted by missed passes; click one for its reads.",
+		],
+		maximize=True,
 	)
-	if layout is None:
-		body = html.Div(
-			[icon("database", size=22), html.Div(html.B("Needs a recording config"))],
-			className="deh-missing-body",
-		)
-		return [header, body]
 
 	# The map is drawn from the layout alone, so this card is the one that renders for a
 	# recording whose pipeline has never run; the antennas just draw plain until there is a
 	# quality table to band them by.
-	antenna_miss = None
-	foot: list = _reads(("layout",))
+	antenna_stats = None
+	reads = ("layout",)
 	if "recording_quality" in context:
-		quality = services.quality_summary(context)
-		antenna_miss = quality["antenna_miss"]
-		worst = quality["worst_antenna"]
-		foot = _reads(("layout", "recording_quality"))
-		# One span, not three children: the footer is a flex row, so each child of its own
-		# would be gapped away from the comma after the antenna, and this reads as one line
-		# whether or not the row wraps.
-		foot.append(
-			html.Span(
-				[
-					"worst: antenna ",
-					html.B(str(worst["antenna"])),
-					f", {worst['miss']:.2f}% of its passes missed",
-				]
-			)
-		)
+		antenna_stats = services.quality_summary(context)["antenna_stats"]
+		reads = ("layout", "recording_quality")
 
-	name = context.recording.name if context.recording else "this recording"
 	return [
 		header,
 		*components.habitat_map(
-			layout, f"Habitat of {name}", antenna_miss=antenna_miss, height=height
+			layout,
+			f"Habitat of {context.recording.name}",
+			antenna_stats=antenna_stats,
+			height=height,
 		),
-		html.Footer(foot, className="deh-card-foot"),
+		html.Footer(_reads(reads), className="deh-card-foot"),
 	]
 
 
 def _card(cell: tuple, context: PlotContext, color_by: str, tab: str) -> html.Article:
+	assert context.recording is not None
 	name, span, height, *rest = cell
 	rows = rest[0] if rest else 1
 	match name:
@@ -1058,7 +1072,7 @@ def _card(cell: tuple, context: PlotContext, color_by: str, tab: str) -> html.Ar
 			return _card_frame(children, span, rows, card_id="cohort-card")
 		case "habitat":
 			return _card_frame(_habitat_card_children(context, height), span, rows)
-		case "events" if context.recording:
+		case "events":
 			children = _events_card_children(context.recording)
 			return _card_frame(children, span, rows, card_id="events-card")
 		case "overview-summary":
@@ -1068,6 +1082,10 @@ def _card(cell: tuple, context: PlotContext, color_by: str, tab: str) -> html.Ar
 		case "quality-missing":
 			children = _quality_missing_children(context, color_by)
 			return _card_frame(children, span, rows, card_id="quality-missing-card")
+		case "sociability-heatmap":
+			# One row of square pair matrices per FACETS_PER_LINE positions; either scope.
+			facets = max(len(context.cages), len(context.tunnels))
+			height *= math.ceil(facets / FACETS_PER_LINE)
 	return _card_frame(_plot_card(name, context, height, tab), span, rows)
 
 
@@ -1076,9 +1094,6 @@ def _controls_bar(summary: dict, controls: dict, context: PlotContext) -> html.D
 	attrs = available_attributes(context) if "animals" in context else ["animal_id"]
 	color_by = controls["color_by"] if controls["color_by"] in attrs else "animal_id"
 	cohort_children, cohort_pop = _cohort_widgets(context, color_by)
-	gradient, band_title = _hours_band(summary, controls["phases"])
-	label, hint = _hours_text(controls["hours"])
-	window_label, window_hint = _window_text(bound, controls["granularity"], controls["window"])
 	one_phase = summary["phases"] == 1 or len(summary["onsets"]) == 1
 	window_style = _HIDDEN if summary["phases"] == 1 else None
 	animals_style = _HIDDEN if len(attrs) == 1 else None
@@ -1105,8 +1120,8 @@ def _controls_bar(summary: dict, controls: dict, context: PlotContext) -> html.D
 				[
 					html.Div(
 						[
-							html.Span(window_label, id="rec-window-label"),
-							html.Span(window_hint, id="rec-window-hint", className="deh-sub"),
+							html.Span(id="rec-window-label"),
+							html.Span(id="rec-window-hint", className="deh-sub"),
 						],
 						className="deh-range-top",
 					),
@@ -1116,7 +1131,6 @@ def _controls_bar(summary: dict, controls: dict, context: PlotContext) -> html.D
 						max=bound,
 						step=1,
 						value=controls["window"],
-						marks=_window_marks(1, bound),
 						minRange=0,
 						size="sm",
 					),
@@ -1128,19 +1142,14 @@ def _controls_bar(summary: dict, controls: dict, context: PlotContext) -> html.D
 				[
 					html.Div(
 						[
-							html.Span(label, id="rec-hours-label"),
-							html.Span(hint, id="rec-hours-hint", className="deh-sub"),
+							html.Span(id="rec-hours-label"),
+							html.Span(id="rec-hours-hint", className="deh-sub"),
 						],
 						className="deh-range-top",
 					),
 					html.Div(
 						[
-							html.Div(
-								id="rec-hours-band",
-								className="deh-band",
-								style={"background": gradient},
-								title=band_title,
-							),
+							html.Div(id="rec-hours-band", className="deh-band"),
 							# Hours since the phase onset, as on the plots' hour axis, over
 							# boundaries rather than bins so 0 → 12 reads as the first 12 h;
 							# controls["hours"] stays in bins.
@@ -1268,7 +1277,7 @@ def _dashboard(
 						data=[{"value": n, "label": n} for n in names],
 						value=name,
 						size="sm",
-						w=280,
+						w=270,
 						allowDeselect=False,
 						searchable=True,
 						classNames={"input": "deh-mono"},
@@ -1283,14 +1292,14 @@ def _dashboard(
 				],
 				className="deh-rec-pick",
 			),
-			html.Div(_meta_strip(summary), className="deh-rec-meta"),
-			html.Span(className="deh-grow"),
+			# Before the facts: a float only rises to the line it comes after.
 			components.download_menu(
 				pid,
 				name,
 				html.Button([icon("download", size=16), "Download"], className="deh-btn sm"),
 				[table for table in DataFrameRegistry.list_available() if table in context],
 			),
+			html.Div(_meta_strip(summary), className="deh-rec-meta"),
 		],
 		className="deh-rec-head",
 	)
@@ -1398,7 +1407,7 @@ def _resolve(pathname, search, paths, current):
 		**identity,
 		"days": summary["days"],
 		"phases": summary["phases"],
-		# The hours band and its label are repainted clientside as the slider moves.
+		# The hours band and its hover text are painted clientside.
 		"onsets": summary["onsets"],
 		"start_from": summary["start_from"],
 	}
@@ -1413,14 +1422,20 @@ def _merge_search(search: str, **updates: str) -> str:
 
 @callback(
 	Output("url", "search", allow_duplicate=True),
+	# dcc.Location pushes a changed href ahead of a changed search, and its own href still holds
+	# the URL it last saw, which deh.switchTab's replaceState has since moved past: sent alone,
+	# the search would lose to that stale href.
+	Output("url", "href", allow_duplicate=True),
 	Input("rec-select", "value"),
 	Input("rec-prev", "n_clicks"),
 	Input("rec-next", "n_clicks"),
 	State("rec-context", "data"),
 	State("url", "search"),
+	# url.search lags on the tab (see deh.switchTab), so the showing one comes from here.
+	State("rec-tab", "data"),
 	prevent_initial_call=True,
 )
-def _switch_recording(selected, _prev, _next, context_data, search):
+def _switch_recording(selected, _prev, _next, context_data, search, tab):
 	# All three inputs are rebuilt into rec-body on every recording switch, so they fire this
 	# once with no click and no trigger behind them (see _notes_modal). Unguarded, that lands
 	# in the step branch as step -1 and walks to the previous recording on its own, which
@@ -1441,15 +1456,14 @@ def _switch_recording(selected, _prev, _next, context_data, search):
 	if name == current:
 		raise PreventUpdate
 
-	return _merge_search(search, recording=name)
+	search = _merge_search(search, recording=name, **({"tab": tab} if tab else {}))
+	return search, PATH + search
 
 
 clientside_callback(
 	ClientsideFunction("deh", "switchTab"),
-	Output("url", "search", allow_duplicate=True),
 	Output("rec-tab", "data"),
 	Input("rec-tabs", "value"),
-	State("url", "search"),
 	prevent_initial_call=True,
 )
 
@@ -1481,6 +1495,8 @@ clientside_callback(
 	Input("rec-window", "value"),
 	State("rec-context", "data"),
 	State("rec-controls", "data"),
+	# Still runs whenever rec-body mounts, as rec-controls sits outside it: Dash fires a
+	# callback whose Inputs arrive in a new chunk if any Output lies outside that chunk.
 	prevent_initial_call=True,
 )
 
@@ -1489,6 +1505,8 @@ clientside_callback(
 	ClientsideFunction("deh", "filterControls"),
 	Output("rec-controls", "data", allow_duplicate=True),
 	Output("rec-group-mean", "disabled"),
+	Output("rec-hours", "value"),
+	Output("rec-phases", "value"),
 	Input("rec-hours", "value"),
 	Input("rec-phases", "value"),
 	Input("rec-animals-by", "value"),
@@ -1496,6 +1514,7 @@ clientside_callback(
 	Input("rec-group-mean", "checked"),
 	State("rec-controls", "data"),
 	State("rec-context", "data"),
+	# Runs whenever rec-body mounts too, like windowControl above.
 	prevent_initial_call=True,
 )
 
@@ -1539,28 +1558,17 @@ def _update_cohort(color_by, context_data):
 
 
 def _cohort_card_children(context: PlotContext, color_by: str) -> list:
-	header = html.Div(
-		html.Div(
-			[
-				html.H3("Cohort"),
-				html.P(
-					[
-						f"{len(context.animal_ids)} animals. Colour follows ",
-						html.B(_human(color_by)),
-						" on every plot here.",
-					]
-				),
-			],
-			className="deh-card-titles",
-		),
-		className="deh-card-head",
+	header = _card_head(
+		"Cohort",
+		[
+			f"{len(context.animal_ids)} animals. Colour follows ",
+			html.B(_human(color_by)),
+			" on every plot here.",
+		],
+		maximize=True,
 	)
 	if "animals" not in context:
-		body = html.Div(
-			[icon("database", size=22), html.Div(html.B(["Needs ", html.Code("animals")]))],
-			className="deh-missing-body",
-		)
-		return [header, body]
+		return [header, _needs("animals")]
 
 	mapping, animals = resolve_colors(context, color_by), context.animals.sort("animal_id")
 	table = html.Table(
@@ -1624,6 +1632,7 @@ clientside_callback(
 	Input("rec-tab", "data"),
 	Input("plot-theme", "data"),
 	Input({"type": "card-opt", "plot": ALL, "option": ALL}, "value"),
+	Input("rec-hover", "data"),
 	State({"type": "plot-req", "plot": ALL}, "data"),
 	State({"type": "badge", "plot": ALL, "control": ALL}, "hidden"),
 )
@@ -1640,8 +1649,34 @@ def _update_plot(request, events_on):
 	if not request or "context" not in request:
 		raise PreventUpdate
 
+	return _build_plot(ctx.outputs_list["id"]["plot"], request, events_on)
+
+
+clientside_callback(
+	ClientsideFunction("deh", "timelineZoom"),
+	Output("rec-timeline-zoom", "data"),
+	Input({"type": "plot", "plot": "recording-timeline"}, "relayoutData"),
+	State("rec-timeline-zoom", "data"),
+	prevent_initial_call=True,
+)
+
+
+@callback(
+	Output({"type": "plot", "plot": "recording-timeline"}, "figure", allow_duplicate=True),
+	Input("rec-timeline-zoom", "data"),
+	State({"type": "plot-req", "plot": "recording-timeline"}, "data"),
+	State("rec-events", "checked"),
+	prevent_initial_call=True,
+)
+def _zoom_timeline(x_range, request, events_on):
+	if not request or "context" not in request:
+		raise PreventUpdate
+
+	return _build_plot("recording-timeline", request, events_on, x_range=x_range)
+
+
+def _build_plot(name: str, request: dict, events_on: bool, **extra) -> go.Figure:
 	context_data, controls, theme = request["context"], request["controls"], request["theme"]
-	name = ctx.outputs_list["id"]["plot"]
 	context = services.plot_context(context_data["location"], context_data["recording"])
 	spec = PlotRegistry.spec(name)
 	if any(table not in context for table in spec.requires):
@@ -1659,11 +1694,15 @@ def _update_plot(request, events_on):
 	if values.get("hours_range") == [0, 23]:
 		values["hours_range"] = None
 
-	figure = PlotRegistry.build(name, context, **values)
+	figure = PlotRegistry.build(name, context, **values, **extra)
 	# The card header already carries the title; the figure's own would double it up.
 	# Plotly still reserves top margin for it, so that's trimmed back too - which is also
 	# where the phase band sits, so it keeps a little more room than the title needed.
-	figure.update_layout(title=None, margin={"t": 30})
+	# Rebuilt for the same request - a zoomed timeline - the figure keeps the viewer's
+	# zoom and hidden legend entries; a new request starts afresh.
+	figure.update_layout(
+		title=None, margin={"t": 30}, uirevision=hash(json.dumps(request, sort_keys=True))
+	)
 	# Not a bare template=: a shape carries a literal colour, so the phase band has to be
 	# repainted for the theme rather than inheriting it.
 	plot_theme.apply(figure, theme or "light")
@@ -1682,6 +1721,8 @@ clientside_callback(
 	Output("fullscreen-modal", "opened"),
 	Output("fullscreen-modal", "title"),
 	Output("fullscreen-plot", "figure"),
+	Output("fullscreen-plot", "style"),
+	Output("fullscreen-frame", "style"),
 	Input({"type": "card-fullscreen", "plot": ALL}, "n_clicks"),
 	State({"type": "plot", "plot": ALL}, "figure"),
 	State({"type": "plot", "plot": ALL}, "id"),

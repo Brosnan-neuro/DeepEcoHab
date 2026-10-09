@@ -42,6 +42,17 @@ work, and press `Ctrl+C` in it to stop the app.
 Without `--debug`, warnings and errors go to `~/.deepecohab/app-cache/app.log`. That is the
 file to attach when you report a problem.
 
+When a newer version of DeepEcoHab is out, the app says so in a notice when it starts.
+**Update now** closes the app, installs the new version and opens it again in a new tab;
+close the old one. On Windows this happens in a new terminal window, which from then on
+is the app's. Wait for any analysis to finish first: the app will not update during one.
+The button is offered when DeepEcoHab was installed with `uv tool install`. Otherwise,
+or to update by hand, close the app and run:
+
+```
+uv tool upgrade "deepecohab[app]"
+```
+
 ```{figure} images/app/projects-empty.png
 :alt: The Projects page of a fresh install, with an empty project list
 
@@ -76,6 +87,8 @@ The Projects page, with one project opened to show its recordings.
 4. The arrow, or the project's name, opens and closes the list of its recordings.
 5. How many of the project's recordings are analysed. **Project table** next to it says
    whether the table the plot builder reads has been generated, and how many rows it has.
+   Once recordings are added, removed or re-analysed after the table was built, it reads
+   **regenerate** instead, with a button that rebuilds it.
 6. The project menu (see [The project menu](#the-project-menu)).
 7. Tick recordings to analyse them.
 8. Each recording's status: how many of the 13 analysis steps are done.
@@ -85,9 +98,7 @@ For each recording, the table also shows its **Window** (first and last day, and
 time zone), how many days and phases it spans, how many mice it holds, the cohort's
 traits (mouse line, genotype, sex) and how many events it declares.
 
-<iframe style="width: 100%; aspect-ratio: 16 / 9; border: 0;" src="https://www.youtube-nocookie.com/embed/4QBjaU-gQQ0" title="DeepEcoHab: create a project and add recordings" allow="encrypted-media; picture-in-picture" allowfullscreen></iframe>
-
-[Watch on YouTube: create a project and add recordings](https://www.youtube.com/watch?v=4QBjaU-gQQ0)
+<video controls preload="metadata" style="width: 100%;" title="DeepEcoHab: create a project and add recordings" src="create-project.mp4"></video>
 
 ### Create a project
 
@@ -130,27 +141,43 @@ Each recording is a set of files with the same name:
 
 - `<name>.config.json`, the recording's metadata: its habitat layout, light cycle, cohort
   and events;
-- `<name>.data.parquet`, the antenna registrations;
-- `<name>.diagnostic.json`, optional, the acquisition software's diagnostics.
+- `<name>.data.parquet`, the antenna registrations, with an `inserted` flag on the ones
+  the acquisition preprocessing interpolated;
+- `<name>.diagnostic.json`, the acquisition software's diagnostics, which say when
+  recording stopped and restarted.
+
+All three are required.
 
 To add recordings:
 
 1. Open the project's row, with the arrow or the project's name.
 2. Click **Add recordings** under its table. The project menu has the same entry.
 3. Drop the files onto the dialog, or click it to pick them. Add all files of every recording,
-   as many recordings as you like, in one go.
+   as many recordings as you like, in one go. Names are matched ignoring case.
 
 ```{figure} images/app/add-recordings-modal.png
 :alt: The Add recordings dialog with its drop zone
 :width: 60%
 
-Files group by name: `<name>.config.json` with `<name>.data.parquet`.
+Files group by name: `<name>.config.json`, `<name>.data.parquet` and `<name>.diagnostic.json`.
 ```
 
 The files are copied into the project, so the originals stay where they were. A recording
-missing a required file, a file that belongs to no recording, or metadata that does not
-validate, is listed in the dialog under **Not added** with the reason. Every other recording
-is added.
+missing a required file, one given two files of the same kind, a file that belongs to no
+recording, or metadata that does not validate, is listed in the dialog under **Not added**
+with the reason. Every other recording is added.
+
+A recording whose name is already in the project asks before it goes in. **Replace**
+swaps in the new files and discards the recording's results, so it must be analysed again;
+this is how you re-add a recording with a corrected config. **Skip** keeps the one already
+there. When several names are taken, tick the box to give the same answer for all of them.
+
+```{figure} images/app/replace-recording-modal.png
+:alt: The Replace recording dialog for a recording already in the project
+:width: 60%
+
+Replacing a recording discards its results.
+```
 
 ```{figure} images/app/project-recordings.png
 :alt: The project's six recordings listed as not analysed
@@ -160,9 +187,7 @@ Six recordings added. None of them is analysed yet.
 
 ### Run the analysis
 
-<iframe style="width: 100%; aspect-ratio: 16 / 9; border: 0;" src="https://www.youtube-nocookie.com/embed/hW57KTr94mk" title="DeepEcoHab: run the analysis" allow="encrypted-media; picture-in-picture" allowfullscreen></iframe>
-
-[Watch on YouTube: run the analysis](https://www.youtube.com/watch?v=hW57KTr94mk)
+<video controls preload="metadata" style="width: 100%;" title="DeepEcoHab: run the analysis" src="run-analysis.mp4"></video>
 
 1. Tick the recordings to analyse. The box in the table's header ticks every recording shown.
    A bar appears at the bottom of the page.
@@ -229,7 +254,8 @@ The project menu.
 - **Add recordings…** is the same as the button under the recordings table.
 - **Generate project table** pools the results of every analysed recording into one
   table, `project_table.parquet`, in the project folder. The plot builder reads this table.
-  Generate it again after analysing new recordings.
+  Generate it again after analysing new recordings; the **Project table** badge says when
+  it is out of date.
 - **Download** gives the project table as Parquet or CSV, or the whole project as a zip:
   every recording's config and results, with or without the raw registrations.
 - **Copy path** copies the project's folder path.
@@ -252,11 +278,13 @@ The download button in a recording's row offers:
 A recording's downloads.
 ```
 
-The bin button removes a recording from the project. **Delist, keep files** takes it off the
-list and leaves its folder where it is. **Reinstate**, under the recordings table, brings it
-back with its results; regenerate the project table afterwards to include it again. **Delete
-files** also deletes the recording's folder: its config, raw registrations and results.
-Deleting cannot be undone.
+The bin button removes a recording from the project. With two or more recordings ticked,
+**Remove selected**, under the recordings table, removes them all at once. **Delist, keep
+files** takes a recording off the list and leaves its folder where it is. **Reinstate**, under
+the recordings table, lists the delisted recordings; tick the ones to bring back with their
+results, and regenerate the project table afterwards to include them again. **Delete files**
+also deletes the recording's folder: its config, raw registrations and results. Deleting
+cannot be undone.
 
 ```{figure} images/app/remove-recording-modal.png
 :alt: The Remove recording dialog with Delist and Delete choices
@@ -270,9 +298,7 @@ Delisting keeps the files. Deleting removes them for good.
 **Open**, in a recording's row, takes you to the recording's dashboard. There you look through
 one recording: first whether its data can be trusted, then what the animals did.
 
-<iframe style="width: 100%; aspect-ratio: 16 / 9; border: 0;" src="https://www.youtube-nocookie.com/embed/AByrGMdzCxY" title="DeepEcoHab: the recording dashboard" allow="encrypted-media; picture-in-picture" allowfullscreen></iframe>
-
-[Watch on YouTube: the recording dashboard](https://www.youtube.com/watch?v=AByrGMdzCxY)
+<video controls preload="metadata" style="width: 100%;" title="DeepEcoHab: the recording dashboard" src="dashboard.mp4"></video>
 
 ```{figure} images/app/dashboard-overview.png
 :alt: The recording dashboard, opened on its Diagnostics tab
@@ -311,15 +337,21 @@ The control bar.
 - **Hours** narrows the plots to part of the day. Hours count from the onset of the phase
   the recording starts with, and the labels show the clock time. The coloured band under
   the slider marks the light and the dark phase.
-- **Phases** switches the light and the dark phase on and off.
+- **Phases** switches the light and the dark phase on and off. It and **Hours** move
+  together: keeping one phase narrows Hours to that phase's stretch of the day, and
+  narrowing Hours ticks only the phases the window still overlaps.
+- **Label** names the animals by their **Tag** or their **Name** (the `subject_name` in the
+  config) on the axes, network nodes and legends, whatever colours them.
 - **Animals by** colours the animals by their tag, or by any cohort attribute that differs
   between them, such as genotype or sex.
-- **Label** names the animals by their **Tag** or their **Subject** name on the axes,
-  network nodes and legends, whatever colours them.
 - **Group mean** draws one line per group instead of one per animal. It is available
   when the animals are coloured by a group, not by their tag.
 - **Events** shows or hides the shading that marks each event on the plots with a time axis.
 - **Cohort** lists the animals with their colour. Click an animal to write notes about it.
+
+A control the recording has no use for is hidden: **Phases** when the recording holds a
+single phase, **Animals by** and **Group mean** when no attribute differs between the
+animals, and **Events** when the recording declares none.
 
 ```{figure} images/app/cohort-popover.png
 :alt: The Cohort list, each animal with its colour, name, sex, genotype and age
@@ -340,8 +372,11 @@ plot shows one line per animal whatever Group mean says.
 to settle before reading anything the analysis says.
 
 - **Detection quality**: the share of missed passes, the number of detections, the
-  worst antenna and the worst animal, the share of time an animal's position is unknown,
-  and when the recording started and ended. The bands are provisional, to be
+  share of time an animal's position is unknown,
+  when the recording started and ended, and how often and for how long it stopped in
+  between. Each stop is drawn in red on a strip across the recording's days and phases;
+  hovering one says whether it was a clean stop, an abrupt end or a silence of unknown
+  cause. The bands are provisional, to be
   confirmed on more recordings: under 1% missed is good, 1-2.5% needs checking, and 2.5%
   or more is poor.
 
@@ -349,15 +384,27 @@ to settle before reading anything the analysis says.
   **Recording start** and **Recording end** show the clock time and how far each lies
   from a phase onset. A recording that started before the onset has time **lost**: what
   was recorded before the onset is left out. One that started after it has time **added**:
-  the first phase has no data for that long. One that ended before the next onset is
-  **short**: the last phase is short by that much. A gap of more than an hour shows as a
+  the first phase has no data for that long. The end is measured the same way against
+  the close of the config's `end_with` phase: a recording that ran past it has time
+  **lost**, and one that stopped before it is **short**, its last phase short by that
+  much. A gap of more than an hour shows as a
   warning. Hover a note for the details.
 - **Habitat**: the cages, tunnels and antennas as the recording's config lays them out.
-  Each antenna is tinted by how many passes it missed.
-- **Missed passes per antenna**, pooled over the cohort, so a failing antenna stands out.
+  Each antenna is tinted by how many passes it missed. Click an antenna, or focus it and
+  press Enter, to see which cage end of which tunnel it sits at and its **correct**,
+  **interpolated** and **bad** passes and missed share. Click elsewhere or press Escape to
+  close it.
+- **Reads per antenna**, every pass pooled over the cohort and stacked to 100%: read
+  (**correct**), filled in by the acquisition preprocessing (**interpolated**), or still
+  unresolved (**bad**), so a failing antenna stands out.
 - **Missed passes by animal and antenna**, the share of each animal's passes over each
-  antenna that went unrecorded.
-- **Position unknown**, the time each animal spent where the antennas could not place it.
+  antenna that the antenna did not read.
+- **Position unknown**, the time each animal spent where the antennas could not place it,
+  with its correct, interpolated and bad passes.
+
+While recording was stopped, between two parts the diagnostics name, nothing is known:
+each animal keeps its last position up to the stop and is unknown from then until its
+first read after the restart. All counts cover the analysed window only.
 
 ```{figure} images/app/tab-diagnostics.png
 :alt: The Diagnostics tab
@@ -374,6 +421,10 @@ to settle before reading anything the analysis says.
 - **Habitat occupancy**: the share of the cohort's time spent in each place.
 - **Cohort phenotype map**: one marker per animal, showing locomotion, sociality, chasing
   and rank at once.
+- **Events**, when the recording declares any: every bout on one strip across the recording,
+  over its light and dark phases, then each event's bouts in a table with their day, phase,
+  start, end, duration and place. Click an event's name to fold its bouts away. The card is
+  drawn from the config alone, so it shows before the analysis has run.
 
 ```{figure} images/app/tab-overview.png
 :alt: The Overview tab
@@ -381,13 +432,14 @@ to settle before reading anything the analysis says.
 
 **Activity** covers where the animals went and when:
 
-- **Position timeline**: each animal's position over time, as a strip.
+- **Position timeline**: each animal's position over time, as a strip. Zoom in to see
+  single visits.
 - **Activity over time**: antenna detections per hour, which shows the circadian rhythm,
   or per day or phase.
 - **Position preference**: how the cohort's time is spread across positions.
 - **Activity per position**: visits to each position, or time spent there.
-- **Position preference over time**: time in each cage or tunnel, across days or phases.
-- **Time per position by hour**: occupancy across the 24 hours of the day.
+- **Position preference over time**: time in each cage or tunnel, across days or phases,
+  or across the 24 hours of the day.
 - **Tunnel-crossing speed**: one box per tunnel, pooling one median speed per
   animal and day or phase. Both crossing directions contribute to the same tunnel.
 - **Mean tunnel-crossing speed**: speed over hours or days/phases, with a shaded
@@ -428,7 +480,8 @@ Mean speed over days for the same illustrative recording.
 
 - **Pairwise sociability**: how often pairs meet, or how long they spend together, per cage
   or tunnel.
-- **Within-cohort sociability**: the mean sociability index of every pair.
+- **Within-cohort sociability**: the share of time every pair spent together, or their
+  sociability index: time together in the cages beyond what chance predicts.
 - **Time spent alone**: time each animal spent with no other animal present.
 - **Sociability network**: pairs linked by the time they spend together.
 - **Relationship stability**: how stable each pair's relationship is, against the time
@@ -443,13 +496,17 @@ Mean speed over days for the same illustrative recording.
 - **Dominance ranking**: each animal's ranking over time, or its day-to-day stability.
 - **Ranking distribution**: the probability distribution of each animal's ranking on the
   last day in the window.
-- **Chasings over time**: the daily rhythm of chasing, or chasing per day or phase.
+- **Chasings over time**: the daily rhythm of chasing, or chasing per day or phase, counted
+  for each animal as chaser or as chased.
 - **Dominance network**: who chases whom, with node size showing rank.
 - **Chasings matrix**: chaser against chased.
 
 ```{figure} images/app/tab-dominance.png
 :alt: The Dominance tab
 ```
+
+On both networks, **Hide edges below** drops the weakest links, as a percentage of the
+strongest, and lays the network out again from what remains.
 
 What each measure means, and which table it comes from, is described in the
 [antenna analysis guide](./tutorial_antenna.md#the-analysis-tables).
@@ -470,6 +527,10 @@ A plot card.
 4. **Export** the plot as a figure file (see [Export a plot](#export-a-plot)).
 5. **Full screen**. Press `Esc` to close it.
 6. The analysis tables the plot reads.
+
+Before **Format**, the **About** button (&#9432;) explains what the plot shows and how it is
+calculated. Cards that are not plots, such as the cohort, the habitat map and the events,
+have a full-screen button of their own.
 
 Some cards have options of their own under their title, such as **Mode** here. A card
 whose tables are not built yet says which tables it needs. Run the analysis for the
@@ -497,9 +558,7 @@ plot builder**, or from the sidebar: after you open a recording, the builder ope
 recording's project. The project picker at the start of the toolbar switches to any other
 project you have opened.
 
-<iframe style="width: 100%; aspect-ratio: 16 / 9; border: 0;" src="https://www.youtube-nocookie.com/embed/L5WByVdDSDU" title="DeepEcoHab: the plot builder" allow="encrypted-media; picture-in-picture" allowfullscreen></iframe>
-
-[Watch on YouTube: the plot builder](https://www.youtube.com/watch?v=L5WByVdDSDU)
+<video controls preload="metadata" style="width: 100%;" title="DeepEcoHab: the plot builder" src="plot-builder.mp4"></video>
 
 ```{figure} images/app/builder-overview.png
 :alt: The plot builder with a box plot of time alone by genotype and sex
@@ -508,17 +567,17 @@ The plot builder, with the preset "Time alone by genotype and sex" loaded.
 ```
 
 1. How **Value** is summed up (see [Value and metrics](#value-and-metrics)).
-2. **Clear shelves** takes every field off the shelves. Filters stay.
-3. How many recordings, rows and metrics the project table holds.
-4. Presets: ready-made plots, and the ones you saved.
-5. The plot type.
-6. The fields you can plot.
-7. Filters.
-8. The shelves: X, Y, Colour and the rest, depending on the plot type. A shelf marked `*`
+2. How many recordings, rows and metrics the project table holds.
+3. **Clear shelves** takes every field off the shelves. Filters stay.
+4. The plot type.
+5. The fields you can plot.
+6. Filters.
+7. The shelves: X, Y, Colour and the rest, depending on the plot type. A shelf marked `*`
    is required.
-9. The plot.
-10. **Save preset**. Next to it are **Reset**, which goes back to the preset you last loaded,
-    **Format** and **Export**.
+8. The plot.
+9. **Presets**: ready-made plots, and the ones you saved (see [Presets](#presets)).
+10. **Save preset**. Before it is **Reset**, which goes back to the preset you last loaded;
+    after it come **Format**, **Export** and **Full screen**.
 
 ### Value and metrics
 
@@ -544,6 +603,10 @@ metric gets its own axis. If you drop Value while several metrics are ticked, th
 puts Metric on Facet row for you. When units would still mix, a warning above the plot
 says so.
 
+Each metric is also a field of its own, listed under **Measure** after Value and Metric and
+read from that metric's rows only. Use these to put two metrics on one plot, for example
+activity on X against time alone on Y.
+
 The buttons above the presets choose how Value is summed up within each point, box or
 bar:
 
@@ -555,8 +618,17 @@ bar:
 
 ### Presets
 
-The built-in presets are a quick way to start. Click one to load it, then change what you
-like.
+The built-in presets are a quick way to start. **Presets**, above the plot, lists them,
+followed by the ones saved in the project and in this browser. Click one to see what it
+shows and a picture of it, then **Load preset** and change what you like. A built-in's
+picture is drawn from the example recordings; a saved preset's is the plot as it stood
+when it was saved. The preset on the plot now is marked **on the plot**.
+
+```{figure} images/app/builder-presets.png
+:alt: The Presets dialog, with the list on the left and a preview of the selected preset on the right
+
+The Presets dialog.
+```
 
 | preset | what it shows |
 |---|---|
@@ -567,18 +639,19 @@ like.
 | Activity around an event | activity in the hours an event ran, against the same clock hours on other days and all other hours |
 | Chasing against cohort size | one point per recording: are larger cohorts more aggressive per partner? |
 
-**Activity around an event** asks which event to use when you click it, with the number of
-recordings that declare each event. **Any event** pools them all.
+**Activity around an event** is listed only when the project declares events. Its preview
+has an **Event** list, with the number of recordings that declare each event; pick one
+before **Load preset**. **Any event** pools them all.
 
 ```{figure} images/app/builder-event-preset.png
-:alt: The event menu of the Activity around an event preset
-:width: 40%
+:alt: The preview of the Activity around an event preset, with its Event list
+:width: 70%
 
 The event preset asks which event to use.
 ```
 
-**Save preset** keeps the current plot, its filters and its formatting. Give it a name and
-choose where to keep it:
+**Save preset** keeps the current plot, its filters and its formatting. Give it a name, and
+optionally a note that the Presets dialog shows with it, and choose where to keep it:
 
 - **In this browser**: only you see it, on this computer.
 - **In the project**: it is written to `builder_presets.json` in the project folder, so
@@ -591,7 +664,8 @@ choose where to keep it:
 Saving a preset.
 ```
 
-A saved preset appears at the end of the presets strip. Its bin button deletes it. Once
+A saved preset appears in the Presets dialog after the built-in ones, with a picture of the
+plot as you saved it. Its bin button deletes it. Once
 you change a loaded preset, the plot's title says "(edited)", and **Reset** goes back
 to it.
 
@@ -619,8 +693,11 @@ The coloured edge of each field shows its kind:
 
 The fields come in groups:
 
-- **Measure**: Value and Metric.
+- **Measure**: Value, Metric, and one field per metric.
 - **Time**: phase, day, phase count, hour.
+- **Position**: the position a row was measured at, and its **position type**: the cage's
+  `cage_type` from the config, or tunnel. Position type compares positions across recordings
+  whose layouts name them differently. Chasing metrics belong to no position.
 - **Events**: one field per event the project declares, plus **Any event**. Each reads
   **During** in the hours the event ran, **Same hours, other days** at the same clock
   hours on the other days, and **Other hours** otherwise. A recording that does not declare
@@ -635,7 +712,8 @@ and adds them to the hover text without changing the plot. If a point covers sev
 values of a field, the hover text lists them, or gives how many there are when there are
 more than three. Histograms and density heatmaps have no Hover shelf, because each bar or
 cell counts many rows. An ordered field on a shelf can also be grouped into
-blocks: click it and type, for example, `3` for blocks of three, or `1-3, 4-6`.
+blocks: click it and type, for example, `3` for blocks of three, or `1-3, 4-6`. Age, on a
+shelf, can also be rounded to whole **days**, **weeks** or **months** from the same menu.
 
 ### Filters
 
@@ -656,9 +734,7 @@ Filters for metric, day and genotype.
 The recording dashboard and the plot builder share two dialogs: **Format**, to adjust a
 plot on screen, and **Export**, to render it as a file.
 
-<iframe style="width: 100%; aspect-ratio: 16 / 9; border: 0;" src="https://www.youtube-nocookie.com/embed/xqHgddq532U" title="DeepEcoHab: format and export a plot" allow="encrypted-media; picture-in-picture" allowfullscreen></iframe>
-
-[Watch on YouTube: format and export a plot](https://www.youtube.com/watch?v=xqHgddq532U)
+<video controls preload="metadata" style="width: 100%;" title="DeepEcoHab: format and export a plot" src="export.mp4"></video>
 
 ### Format a plot
 
@@ -675,7 +751,9 @@ Every field left empty stays automatic, and each shows its automatic value in gr
 - the **min** and **max** of each axis;
 - the colour bar's title and range, on plots that have one;
 - the **Colour scale** of heatmaps and the **Category palette** of groups. A palette with
-  fewer colours than the plot has groups cannot be picked.
+  fewer colours than the plot has groups cannot be picked;
+- **Shared y axis** (plot builder only): whether facets share one y axis or each scales to
+  its own data.
 
 A field that does not apply to the plot is greyed out. A title you set stays with its axis
 only while the same field is on it: put another field there and the axis goes back to
@@ -719,7 +797,7 @@ my_project/
   builder_presets.json    presets saved "in the project"
   recording_name/
     config.json           metadata and notes
-    raw/data.parquet      antenna registrations
+    raw/                  the files as uploaded: data.parquet, config.json, diagnostic.json
     results/              one Parquet file per analysis table
 ```
 

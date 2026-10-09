@@ -26,8 +26,8 @@ One row per antenna read, with exactly these columns, in this order:
 | `internal_board_timestamp` *(optional)* | `Datetime("us", <recording timezone>)` | the acquisition board's own clock; not used by the analysis yet |
 
 Timestamps are microseconds in the timezone the metadata names. The schema is checked when
-the recording is added, and a mismatch is rejected with the expected and found schemas side
-by side. DeepEcoHab does not read the raw EcoHab `.txt` logs: convert them to this format
+the recording is added, and a mismatch is rejected with a list of what differs: a missing or
+unexpected column, a wrong type, or columns out of order. DeepEcoHab does not read the raw EcoHab `.txt` logs: convert them to this format
 first.
 
 ### Metadata
@@ -47,7 +47,8 @@ file lists more animals, cages, tunnels or antenna pairs.
       "end_datetime": "2023-05-22T10:02:17+02:00",
       "recording_timezone": "Europe/Warsaw",
       "phases": {"light_phase": "01:00:00", "dark_phase": "13:00:00"},
-      "start_from": "dark_phase"
+      "start_from": "dark_phase",
+      "end_with": "dark_phase"
     },
     "cohort": {
       "animals": [
@@ -96,7 +97,14 @@ hours are counted from there. Data recorded before it is left out; if recording 
 it, the first phase is simply short. Adding a recording warns when either gap exceeds an
 hour.
 
-**Cohort.** Every animal field is required. `tag` is the RFID tag used in `animal_id`.
+`end_with` (required) does the same for the end: the experiment ends where the named phase
+*closes*, which is the onset of the other phase, nearest to `end_datetime`. Data recorded
+after it is left out; if recording stopped before it, the last phase is simply short.
+
+**Cohort.** Every animal field is required except `subject_name` and `treatment`, which may be
+left out or set to `null`. Text fields may not be empty. `tag` is the RFID tag used in
+`animal_id`. The recording's `name`, `project_name` and `recording_location` may not be empty
+either.
 
 **Layout.** `antenna_combinations` maps a pair of consecutive reads,
 `"<previous antenna>_<current antenna>"`, to the position the animal was in between them:
@@ -145,10 +153,10 @@ after the project inside `location`.
 
 ```python
 project = deh.Project.create(
-    project_name="tsc2",
-    experimenter="Jane Doe",
-    location="path/to/projects",
-    description="Vglut2 HET vs WT, females",
+	project_name="tsc2",
+	experimenter="Jane Doe",
+	location="path/to/projects",
+	description="Vglut2 HET vs WT, females",
 )
 ```
 
@@ -163,7 +171,7 @@ or open the project in a `with` block:
 
 ```python
 with deh.Project.load("path/to/projects/tsc2") as project:
-    ...
+	...
 ```
 
 ## Add recordings
@@ -176,23 +184,34 @@ A recording is delivered as files sharing one name, `<name>.<suffix>`:
 
 ```python
 recording = project.add_recording(
-    "path/to/cohort1.config.json",
-    "path/to/cohort1.data.parquet",
-    "path/to/cohort1.diagnostic.json",  # optional
+	"path/to/cohort1.config.json",
+	"path/to/cohort1.data.parquet",
+	"path/to/cohort1.diagnostic.json",  # optional
 )
 ```
 
-Several at once, from their files in any order - they are grouped by name:
+Several at once, from their files in any order - they are grouped by name, ignoring case, so
+`Cohort1.Config.json` pairs with `cohort1.data.parquet`:
 
 ```python
 report = project.add_recordings(Path("path/to/recordings").iterdir())
 
-report.added   # names of the recordings that went in
+report.added  # names of the recordings that went in
 report.failed  # (name, error) for each recording or stray file that did not
+report.existing  # name -> files of each recording left out because its name is taken
 ```
 
-A recording that fails validation, or misses a required file, does not stop the others; a
-warning lists every failure.
+A recording that fails validation, misses a required file, or comes with two different files
+of one kind (two configs, say), does not stop the others; a warning lists every failure. The
+same file given twice counts once.
+
+A name already in the project is left alone unless you pass `overwrite=True`, which replaces
+that recording and discards its results - how you re-add one with an edited config, say a
+different `start_from` phase:
+
+```python
+project.add_recordings(report.existing["cohort1"], overwrite=True)
+```
 
 Adding copies the data into the project, so the source files are not needed afterwards:
 
@@ -203,6 +222,7 @@ tsc2/
   cohort1_2023_05_17/
     config.json           the validated metadata
     raw/data.parquet      the copied registrations
+    raw/config.json       the metadata exactly as it was given
     raw/diagnostic.json   the diagnostics, when they came with it
     results/              one parquet file per analysis table
 ```
@@ -212,7 +232,7 @@ Recordings are reached by name, or all together:
 ```python
 recording = project["cohort1_2023_05_17"]
 project.recordings
-project.remove_recording("cohort1_2023_05_17")                     # keeps the files
+project.remove_recording("cohort1_2023_05_17")  # keeps the files
 project.remove_recording("cohort1_2023_05_17", delete_files=True)  # deletes them too
 ```
 
@@ -231,11 +251,11 @@ Options:
 
 ```python
 project.run_analysis(
-    params=deh.AnalysisParams(minimum_time=5),
-    names=["cohort1_2023_05_17"],  # only these recordings
-    targets=["feature_df"],        # only these tables and the tables they are built from
-    overwrite=True,                # rebuild tables that already exist
-    workers=2,                     # how many recordings to analyse at once
+	params=deh.AnalysisParams(minimum_time=5),
+	names=["cohort1_2023_05_17"],  # only these recordings
+	targets=["feature_df"],  # only these tables and the tables they are built from
+	overwrite=True,  # rebuild tables that already exist
+	workers=2,  # how many recordings to analyse at once
 )
 ```
 
@@ -255,8 +275,8 @@ Existing tables are not rebuilt when parameters change: pass `overwrite=True`, w
 ## Load results
 
 ```python
-activity = recording.load_results("activity_df")               # polars LazyFrame
-activity = recording.load_results("activity_df", eager=True)   # polars DataFrame
+activity = recording.load_results("activity_df")  # polars LazyFrame
+activity = recording.load_results("activity_df", eager=True)  # polars DataFrame
 ```
 
 An unknown name raises `KeyError`; a table that has not been built yet raises
@@ -314,7 +334,7 @@ names. Time is held as polars `Duration` columns; convert with, for example,
 | `ranking` | animal, after every chasing event | `mu`, `sigma`, `ordinal`, `social_rank` |
 | `pairwise_meetings` | hour, pair and position | `time_together`, `pairwise_encounters` |
 | `incohort_sociability` | phase occurrence and pair | `proportion_together`, `sociability` |
-| `feature_df` | hour, animal and metric | `value`, `exposure` |
+| `feature_df` | hour, animal, metric and position | `value`, `exposure` |
 
 ### Activity and time alone
 
@@ -398,6 +418,11 @@ row stores a metric's `value` and the `exposure` it arose from, both per hour:
 | `n_chased` | chases as chased | hours observed × (n_mice − 1) | chases per partner-hour |
 | `n_chasing_per_detection` | chases as chaser | antenna reads | chases per read |
 
+`activity`, `time_alone`, `time_together` and `pairwise_encounters` are held per `position`,
+each exposed against the time spent there, so a rate filtered to some positions reads within
+them and the positions still add back up to the whole. Chasings belong to no position, so the
+three chasing metrics have a `null` position.
+
 A rate is `sum(value) / sum(exposure)` over whatever grouping you need, so the hourly rows add
 up exactly to a phase, a day or the whole recording:
 
@@ -405,11 +430,11 @@ up exactly to a phase, a day or the whole recording:
 import polars as pl
 
 rates = (
-    recording.load_results("feature_df")
-    .filter(pl.col("phase") == "dark_phase")
-    .group_by("animal_id", "metric")
-    .agg((pl.sum("value") / pl.sum("exposure")).alias("rate"))
-    .collect()
+	recording.load_results("feature_df")
+	.filter(pl.col("phase") == "dark_phase")
+	.group_by("animal_id", "metric")
+	.agg((pl.sum("value") / pl.sum("exposure")).alias("rate"))
+	.collect()
 )
 ```
 
@@ -430,7 +455,7 @@ transponder as a row:
 
 ```python
 recording.load_results("recording_quality", eager=True).pivot(
-    on="antenna", index="animal_id", values="miss_rate"
+	on="antenna", index="animal_id", values="miss_rate"
 )
 ```
 
@@ -461,8 +486,8 @@ activity during the hours a novel object was present:
 bouts = recording.load_results("event_bouts")
 
 during_novel_object = recording.load_results("activity_df").join(
-    bouts.filter(pl.col("event") == "novel_object").select("day", "hour").unique(),
-    on=["day", "hour"],
+	bouts.filter(pl.col("event") == "novel_object").select("day", "hour").unique(),
+	on=["day", "hour"],
 )
 ```
 
@@ -502,6 +527,9 @@ table = project.generate_project_table()
 
 This combines every recording's `feature_df` with its `animals` metadata, adds `recording` and
 `n_mice` columns, and saves the result as `project_table.parquet` in the project directory.
+A `position_type` column names what each row's position is - its cage's `cage_type`,
+`"tunnel"` or `undefined` - so positions compare across recordings whose layouts name them
+differently.
 Pass `names=[...]` to include only some recordings, and reload a saved table with
 `project.load_project_table()`.
 
@@ -517,9 +545,9 @@ other - swap in `"novel_object"` below to split a metric by whether the event wa
 
 ```python
 rates = (
-    table.group_by("genotype", "phase", "metric")
-    .agg((pl.sum("value") / pl.sum("exposure")).alias("rate"))
-    .collect()
+	table.group_by("genotype", "phase", "metric")
+	.agg((pl.sum("value") / pl.sum("exposure")).alias("rate"))
+	.collect()
 )
 ```
 

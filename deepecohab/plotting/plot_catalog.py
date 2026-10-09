@@ -131,15 +131,20 @@ def _window(
 )
 def recording_timeline(
 	context: PlotContext,
+	x_range: tuple[str, str] | None = None,
 	*,
 	days_range: tuple[int, int] | None = None,
 	granularity: Granularity = "day",
 	hours_range: tuple[int, int] | None = None,
 	label_by: LabelBy = "animal_id",
 ) -> go.Figure:
-	"""Every animal's position over time, as a compact Gantt-style strip."""
+	"""Every animal's position over time, as a compact Gantt-style strip.
+
+	``x_range`` is the span a zoom shows, resampled at its own resolution. It sits before
+	the ``*`` because it follows the plot's axis, not a control, so it is no card option.
+	"""
 	window = _window(context, days_range, granularity)
-	frame = prepare.prep_timeline(context, window, granularity, hours_range)
+	frame = prepare.prep_timeline(context, window, granularity, hours_range, x_range)
 	spans = prepare.prep_event_spans(context, window, granularity, "datetime", hours_range)
 
 	figure = plot_factory.plot_timeline(
@@ -184,7 +189,14 @@ def activity(
 	window = _window(context, days_range, granularity)
 	positions = context.positions if scope == "all" else context.scope_positions(scope)
 	frame = prepare.prep_activity(
-		context, window, phase_type, granularity, agg, positions, hours_range
+		context,
+		window,
+		phase_type,
+		granularity,
+		agg,
+		positions,
+		{"visits": "visits_to_position", "time": "time_in_position"},
+		hours_range,
 	)
 	mapping = resolve_colors(context, color_by, group_mean=group_mean, label_by=label_by)
 	frame = mean_by_group(frame, mapping, ["visits", "time"])
@@ -227,8 +239,15 @@ def time_alone(
 	"""
 	window = _window(context, days_range, granularity)
 	positions = context.scope_positions(scope)
-	frame = prepare.prep_time_alone(
-		context, window, phase_type, granularity, agg, positions, hours_range
+	frame = prepare.prep_activity(
+		context,
+		window,
+		phase_type,
+		granularity,
+		agg,
+		positions,
+		{"time_alone": "time_alone"},
+		hours_range,
 	)
 	mapping = resolve_colors(context, color_by, group_mean=group_mean, label_by=label_by)
 	frame = mean_by_group(frame, mapping, ["time_alone"])
@@ -736,9 +755,9 @@ def social_stability(
 	"quality-heatmap",
 	title="Missed passes by animal and antenna",
 	info=(
-		"An animal read at an antenna not connected to its previous one passed antennas that "
-		"never fired, each charged as a missed pass. Cells show the share of each animal's "
-		"passes per antenna that went unrecorded, a lower bound. Bright columns flag weak "
+		"A missed pass is one the antenna did not read: interpolated by preprocessing, or "
+		"still unresolved (bad). Cells show the share of each animal's passes per antenna "
+		"that were missed, a lower bound, inside the analysed window. Bright columns flag weak "
 		"antennas; bright rows, weak tags."
 	),
 	requires=("recording_quality", "animals"),
@@ -752,12 +771,12 @@ def quality_heatmap(context: PlotContext, *, label_by: LabelBy = "animal_id") ->
 
 @PlotRegistry.register(
 	"quality-antenna",
-	title="Missed passes per antenna",
+	title="Reads per antenna",
 	info=(
-		"A missed pass is an antenna an animal must have crossed between two reads the layout "
-		"doesn't connect. Bars pool the cohort: missed over missed plus detected, summed across "
-		"animals, so heavily sampled animals weigh more. One tall bar points to a marginal "
-		"antenna."
+		"Every pass over each antenna in the analysed window. Correct: read. Interpolated: "
+		"inserted by preprocessing. Bad: the layout says the animal crossed it unread and "
+		"nothing filled it in. Steps across a recording stop don't count. Bars pool the "
+		"cohort; a thick top flags a marginal antenna."
 	),
 	requires=("recording_quality",),
 )

@@ -1,5 +1,4 @@
 import base64
-import copy
 import math
 import re
 import textwrap
@@ -146,12 +145,10 @@ def _thin_axis(axis: dict[str, Any], labels: list[Any], slot: float, tick: float
 	longest = max(len(str(label)) for label in labels) * _CHAR * tick
 
 	if longest <= tick * _WIDE_LABEL_SCALE:
-		step = math.ceil((longest * _LINE_HEIGHT) / slot) if slot < longest * _LINE_HEIGHT else 1
+		step = max(1, math.ceil((longest * _LINE_HEIGHT) / slot))
 	else:
 		axis["tickangle"] = -90 if slot < longest * _ROTATE_BELOW else 0
-		step = (
-			math.ceil((tick * _ROTATED_TICK_GAP) / slot) if slot < tick * _ROTATED_TICK_GAP else 1
-		)
+		step = max(1, math.ceil((tick * _ROTATED_TICK_GAP) / slot))
 
 	if step > 1:
 		kept = labels[::step]
@@ -192,8 +189,8 @@ def fit_for_export(
 		still would not fit - an oversized legend, or panels too short to read.
 	"""
 	source = figure.to_dict()
-	data: list[dict[str, Any]] = copy.deepcopy(source.get("data", []))
-	layout: dict[str, Any] = copy.deepcopy(source.get("layout", {}))
+	data: list[dict[str, Any]] = source.get("data", [])
+	layout: dict[str, Any] = source.get("layout", {})
 	notes: list[str] = []
 
 	# A trace draws its axes whether or not the layout names them; name every one, so the
@@ -582,14 +579,11 @@ def _plotly_array(value: Any) -> Any:
 def _axis_values(values: list[Any], axis: dict[str, Any]) -> list[Any]:
 	"""A trace's coordinates as its axis labels them, where the trace holds plain numbers.
 
-	Epoch milliseconds on a date axis become ISO datetimes, and positions on an axis whose
-	ticks are relabelled through ``tickvals``/``ticktext`` become that tick text.
+	Positions on an axis whose ticks are relabelled through ``tickvals``/``ticktext``
+	become that tick text.
 	"""
 	if not values or not all(isinstance(value, int | float) for value in values):
 		return values
-	if axis.get("type") == "date":
-		stamps = np.array(values, dtype="float64").astype("datetime64[ms]")
-		return np.datetime_as_string(stamps).tolist()
 	if axis.get("tickvals") is not None and axis.get("ticktext") is not None:
 		labels = dict(zip(axis["tickvals"], axis["ticktext"], strict=False))
 		return [labels.get(value, value) for value in values]

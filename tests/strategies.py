@@ -22,6 +22,7 @@ from deepecohab.core.data_model import (
 	Animal,
 	Cage,
 	Cohort,
+	Device,
 	Event,
 	Layout,
 	Recording,
@@ -46,6 +47,9 @@ ANIMALS = ["A", "B", "C", "D", "E", "F"]
 CAGES = ["cage_1", "cage_2", "cage_3", "cage_4"]
 POSITIONS = [*CAGES, "tunnel_1", "tunnel_2"]
 PHASE_NAMES = ["light_phase", "dark_phase"]
+
+#: A recording's ``diagnostic.json`` with no recording boundaries.
+MINIMAL_DIAGNOSTIC = '{"recording_boundaries": []}'
 
 _MIN, _MAX = dt.datetime(2023, 1, 1), dt.datetime(2023, 12, 31)
 
@@ -350,15 +354,17 @@ def analysis_recording(
 	finish: str = "2023-05-26 23:00:00",
 	phases: dict[str, dt.time] | None = None,
 	start_from: str = "light_phase",
+	end_with: str = "dark_phase",
 	antenna_combinations: dict[str, str] | None = None,
 	tunnels_map: dict[str, str] | None = None,
 	root: Path | None = None,
 	events: list[Event] | None = None,
+	devices: list[Device] | None = None,
 ) -> Recording:
 	"""A fully-populated Recording for the antenna_analysis steps.
 
 	Carries everything the grid helpers need (timeline, cohort) plus the linear
-	layout above, and any ``events`` declared on it. ``root`` is where results would
+	layout above, and any ``events`` and ``devices`` declared on it. ``root`` is where results would
 	be written; tests that monkeypatch ``load_results`` can leave it unset.
 	"""
 	animal_ids = animal_ids or ["A", "B", "C"]
@@ -374,6 +380,7 @@ def analysis_recording(
 			recording_timezone=zone,
 			phases=phases or DEFAULT_PHASES,
 			start_from=start_from,
+			end_with=end_with,
 		),
 		cohort=make_cohort(animal_ids),
 		layout=make_layout(
@@ -381,6 +388,7 @@ def analysis_recording(
 			tunnels_map or ANALYSIS_TUNNELS_MAP,
 		),
 		events=events or [],
+		devices=devices or [],
 		notes="",
 		data=pl.LazyFrame(
 			schema={
@@ -388,6 +396,7 @@ def analysis_recording(
 				"antenna": pl.Categorical(),
 				"time_under": pl.Duration("us"),
 				"animal_id": pl.Enum(sorted(animal_ids)),
+				"inserted": pl.Boolean(),
 			}
 		),
 	)

@@ -47,20 +47,23 @@ def test_rebuilt_header_does_not_navigate_on_its_own():
 	# so Dash fires this callback with no trigger behind it. Stepping there walked to the
 	# previous recording, which rebuilt the header and fired it again.
 	with _triggered(), pytest.raises(PreventUpdate):
-		recording._switch_recording("rec_b", None, None, _CONTEXT, "?recording=rec_b")
+		recording._switch_recording("rec_b", None, None, _CONTEXT, "?recording=rec_b", None)
 
 
-def test_next_click_steps_to_the_following_recording():
+def test_next_click_steps_to_the_following_recording_on_the_showing_tab():
+	# url.search still holds the tab the page loaded with; rec-tab holds the one showing.
 	with _triggered({"prop_id": "rec-next.n_clicks", "value": 1}):
-		search = recording._switch_recording("rec_b", None, 1, _CONTEXT, "?recording=rec_b")
-	assert search == "?recording=rec_c"
+		search = recording._switch_recording(
+			"rec_b", None, 1, _CONTEXT, "?recording=rec_b&tab=overview", "social"
+		)
+	assert search == ("?recording=rec_c&tab=social", "/recording?recording=rec_c&tab=social")
 
 
 def test_prev_click_wraps_past_the_first_recording():
 	context = {"location": "/project", "recording": "rec_a"}
 	with _triggered({"prop_id": "rec-prev.n_clicks", "value": 1}):
-		search = recording._switch_recording("rec_a", 1, None, context, "?recording=rec_a")
-	assert search == "?recording=rec_c"
+		search = recording._switch_recording("rec_a", 1, None, context, "?recording=rec_a", None)
+	assert search == ("?recording=rec_c", "/recording?recording=rec_c")
 
 
 def _layout(cages: list[tuple], tunnels: list[tuple]) -> Layout:
@@ -170,14 +173,19 @@ def test_free_text_cage_types_each_get_a_look_until_eight():
 
 def test_every_antenna_is_tinted_by_its_own_miss_rate():
 	# The bands are the header badge's: under 1% plain, 1-2.5% warn, 2.5% and over bad.
-	miss = {"1": 0.4, "2": 1.0, "3": 2.49, "4": 2.5, "5": 9.9}
-	svg = components._habitat_svg(_square(), "Habitat of rec_b", miss)
+	stats = {
+		antenna: {"correct": 1200, "interpolated": 3, "bad": 1, "miss": miss}
+		for antenna, miss in {"1": 0.4, "2": 1.0, "3": 2.49, "4": 2.5, "5": 9.9}.items()
+	}
+	svg = components._habitat_svg(_square(), "Habitat of rec_b", stats)
 
 	assert svg.count('class="deh-hab-ant warn"') == 2
 	assert svg.count('class="deh-hab-ant bad"') == 2
 	# Antenna 1 is under the band, and 6-8 have no rate at all.
 	assert svg.count('class="deh-hab-ant"') == 4
-	assert "2.49% missed passes" in svg
+	# The click popover carries the reads, escaped once more for its attribute.
+	assert "&lt;span&gt;2.49%&lt;/span&gt;" in svg
+	assert "&lt;span&gt;1,200&lt;/span&gt;" in svg
 
 
 def test_antennas_draw_plain_without_a_quality_table():
@@ -185,7 +193,7 @@ def test_antennas_draw_plain_without_a_quality_table():
 	svg = components._habitat_svg(_square(), "Habitat of rec_b", None)
 
 	assert svg.count('class="deh-hab-ant"') == 8
-	assert "missed passes" not in svg
+	assert "Missed" not in svg
 
 
 def test_layout_names_are_escaped_into_the_markup():
@@ -209,14 +217,18 @@ def test_the_map_carries_its_svg_for_the_painter():
 	assert legend.className == "deh-hab-legend"
 	# The band keys only mean something once there are rates to band by.
 	assert len(legend.children) == 5
-	_, banded = components.habitat_map(_square(), "Habitat of rec_b", antenna_miss={"1": 3.0})
+	_, banded = components.habitat_map(
+		_square(),
+		"Habitat of rec_b",
+		antenna_stats={"1": {"correct": 1, "interpolated": 0, "bad": 0, "miss": 3.0}},
+	)
 	assert len(banded.children) == 7
 
 
 def test_events_card_places_each_bout_on_the_recording_clock():
 	"""Day and phase count from the experiment start, as the window slider does.
 
-	The fixture runs 71 h from 24 May 00:00 UTC, light from 00:00 and dark from 12:00.
+	The fixture runs 72 h from 24 May 00:00 UTC, light from 00:00 and dark from 12:00.
 	"""
 	at = strategies.at
 	stimulus = Bout(start=at(2023, 5, 25, 13), end=at(2023, 5, 25, 15, 30), position=["cage_1"])
@@ -239,5 +251,5 @@ def test_events_card_places_each_bout_on_the_recording_clock():
 		["Day 1 · dark", "24 May 23:00", "25 May 01:00", "2h", "Whole habitat"],
 	]
 	bar = strip.children[1].children[0]
-	assert bar.style["left"] == f"{100 * 37 / 71:.3f}%"
-	assert bar.style["width"] == f"{100 * 2.5 / 71:.3f}%"
+	assert bar.style["left"] == f"max(3px, {100 * 37 / 72:.3f}%)"
+	assert bar.style["right"] == f"max(3px, {100 - 100 * 39.5 / 72:.3f}%)"

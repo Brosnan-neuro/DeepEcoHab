@@ -109,7 +109,7 @@ def test_bouts_of_one_event_may_abut():
 			[event("x", Bout(start=at(0, 23), end=at(1, 1)))], "outside", id="before the window"
 		),
 		pytest.param(
-			[event("x", Bout(start=at(3, 22), end=at(4, 0)))], "outside", id="after the window"
+			[event("x", Bout(start=at(3, 22), end=at(4, 1)))], "outside", id="after the window"
 		),
 		pytest.param(
 			[event("x", Bout(start=at(1, 1), end=at(1, 2), position=["cage_9"]))],
@@ -131,7 +131,7 @@ def test_recording_rejects_events_it_cannot_place(events, match):
 def test_config_without_events_still_loads():
 	"""Configs written before events existed have no such key."""
 	recording = strategies.analysis_recording()
-	config = recording.to_config()
+	config = recording.model_dump(mode="json")
 	del config["events"]
 
 	assert Recording.model_validate({**config, "data": recording.data}).events == []
@@ -141,7 +141,9 @@ def test_events_survive_a_config_round_trip():
 	recording = strategies.analysis_recording(
 		events=[event("social", Bout(start=at(1, 13), end=at(1, 14), position=["cage_1"]))]
 	)
-	restored = Recording.model_validate({**recording.to_config(), "data": recording.data})
+	restored = Recording.model_validate(
+		{**recording.model_dump(mode="json"), "data": recording.data}
+	)
 
 	assert restored.events == recording.events
 
@@ -214,6 +216,7 @@ def test_offset_datetimes_land_on_the_recording_clock():
 		finish="2023-05-22 10:02:17",
 		phases={"light_phase": dt.time(1, 0), "dark_phase": dt.time(13, 0)},
 		start_from="dark_phase",
+		end_with="light_phase",
 		events=[event("C21 injection", injection)],
 	)
 	frame = cells(recording)

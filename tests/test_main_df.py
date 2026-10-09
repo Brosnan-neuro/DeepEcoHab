@@ -18,7 +18,7 @@ import strategies
 from pydantic import ValidationError
 
 from deepecohab.core import recording_pipeline
-from deepecohab.core.data_model import AnalysisParams, Layout, Recording
+from deepecohab.core.data_model import AnalysisParams, Boundary, Layout, Recording
 
 at = strategies.at
 HALF_DAY = 43200.0  # the default extrapolation_limit, in seconds
@@ -41,6 +41,7 @@ def recording_with(rows: list[tuple[str, int, dt.datetime]], **overrides) -> Rec
 				"antenna": str(antenna),
 				"time_under": dt.timedelta(milliseconds=100),
 				"animal_id": animal,
+				"inserted": False,
 			}
 			for animal, antenna, moment in rows
 		],
@@ -160,6 +161,93 @@ def test_extrapolation_limit_is_configurable():
 	assert none["time_spent"] == recording_with(reads).timeline.local_span[1] - at(
 		2023, 5, 24, 0, 10
 	)
+
+
+# --- recording boundaries ----------------------------------------------------
+
+
+def stopped(recording: Recording, start: dt.datetime, end: dt.datetime) -> Recording:
+	recording.boundaries = [Boundary(start=start, end=end, kind="observed_record_gap")]
+	return recording
+
+
+def test_a_recording_stop_carries_the_position_to_it_then_leaves_it_undefined():
+	"""Nothing is known while recording was stopped, nor until the animal is read again.
+
+	The carry ends at the stop rather than running on over it, and the first read after
+	the restart - whose antenna pair spans the stop - covers the stretch as undefined.
+	"""
+	recording = stopped(
+		recording_with(
+			[
+				("A", 1, at(2023, 5, 24, 0, 5)),
+				("A", 2, at(2023, 5, 24, 0, 10)),
+				("A", 3, at(2023, 5, 24, 6, 0)),
+				("A", 3, at(2023, 5, 24, 6, 30)),
+			]
+		),
+		at(2023, 5, 24, 2, 0),
+		at(2023, 5, 24, 5, 0),
+	)
+	_, end = recording.timeline.local_span
+
+	rows = rows_for(build(recording), "A")
+	carried, restart, after = rows[2:5]
+
+	assert carried["datetime"] == at(2023, 5, 24, 2, 0)
+	assert carried["position"] == "cage_2"
+	assert restart["position"] == Layout.UNDEFINED
+	assert restart["time_spent"] == dt.timedelta(hours=4)
+	assert after["position"] == "cage_3"
+	assert sum((row["time_spent"] for row in rows), dt.timedelta()) == end - at(2023, 5, 24, 0, 5)
+
+
+def test_silence_past_the_limit_before_a_stop_is_undefined_up_to_it():
+	"""The cap still applies inside a part: an hour's carry, then undefined to the stop."""
+	recording = stopped(
+		recording_with([("A", 1, at(2023, 5, 24, 0, 0)), ("A", 1, at(2023, 5, 24, 9, 0))]),
+		at(2023, 5, 24, 4, 0),
+		at(2023, 5, 24, 8, 0),
+	)
+
+	rows = rows_for(build(recording, extrapolation_limit=3600.0), "A")
+
+	assert [(row["datetime"], row["position"]) for row in rows[1:4]] == [
+		(at(2023, 5, 24, 1, 0), "cage_1"),
+		(at(2023, 5, 24, 4, 0), Layout.UNDEFINED),
+		(at(2023, 5, 24, 9, 0), Layout.UNDEFINED),
+	]
+
+
+def test_every_read_at_the_restart_instant_is_undefined():
+	"""Two reads in the same microsecond: either could come first, so neither resolves."""
+	restart = at(2023, 5, 24, 6, 0)
+	recording = stopped(
+		recording_with([("A", 1, at(2023, 5, 24, 0, 5)), ("A", 1, restart), ("A", 2, restart)]),
+		at(2023, 5, 24, 2, 0),
+		restart,
+	)
+
+	rows = [row for row in rows_for(build(recording), "A") if row["datetime"] == restart]
+
+	assert [row["position"] for row in rows] == [Layout.UNDEFINED] * 2
+
+
+def test_a_stop_before_the_window_changes_nothing_inside_it():
+	"""The trimmed lead-in absorbs it: in-window rows are as if there had been no stop."""
+	reads = [
+		("A", 1, at(2023, 5, 24, 20, 30)),
+		("A", 2, at(2023, 5, 24, 23, 0)),
+		("A", 3, at(2023, 5, 25, 1, 0)),
+	]
+	plain = build(recording_with(reads, **LEAD_WINDOW))
+	after_stop = build(
+		stopped(
+			recording_with(reads, **LEAD_WINDOW), at(2023, 5, 24, 21, 0), at(2023, 5, 24, 22, 0)
+		)
+	)
+
+	assert after_stop.equals(plain)
 
 
 # --- derive, then trim -------------------------------------------------------
@@ -325,6 +413,30 @@ def test_pieces_tile_the_visit_exactly(monkeypatch):
 	assert (~pieces["interpolated"]).sum() == main.height  # one first piece per visit
 
 
+def test_row_order_and_row_id_do_not_depend_on_input_order(monkeypatch):
+	"""Reruns write identical tables, row for row.
+
+	The two animals read at the same instants and are both carried to the window end,
+	so ``datetime`` alone leaves ties. padded_df's ``row_id`` is main_df's row index, so
+	an unpinned tie order renumbers the visits on every run.
+	"""
+	rows = [
+		("A", 1, at(2023, 5, 24, 0, 5)),
+		("B", 2, at(2023, 5, 24, 0, 5)),
+		("A", 2, at(2023, 5, 24, 0, 10)),
+		("B", 1, at(2023, 5, 24, 0, 10)),
+	]
+	recordings = [recording_with(order) for order in (rows, rows[::-1])]
+	mains = [
+		recording_pipeline.build_main_df(recording, AnalysisParams()).collect()
+		for recording in recordings
+	]
+	paddeds = [padded(monkeypatch, *pair) for pair in zip(recordings, mains, strict=True)]
+
+	assert mains[0].equals(mains[1])
+	assert paddeds[0].equals(paddeds[1])
+
+
 def test_no_piece_starts_before_the_analysed_window(monkeypatch):
 	"""The clipped first visit is what keeps padding inside the grid.
 
@@ -358,10 +470,11 @@ def loaded_with(antennas: list[str]) -> Recording:
 			"antenna": antennas,
 			"time_under": [dt.timedelta(milliseconds=100)] * len(antennas),
 			"animal_id": ["A"] * len(antennas),
+			"inserted": [False] * len(antennas),
 		},
 		schema=recording.data_schema,
 	)
-	return Recording.model_validate({**recording.to_config(), "data": frame})
+	return Recording.model_validate({**recording.model_dump(mode="json"), "data": frame})
 
 
 def test_antenna_the_layout_does_not_name_is_rejected():
@@ -379,8 +492,30 @@ def test_optional_column_is_accepted_when_present_and_typed():
 	"""internal_board_timestamp may be absent, but when present it must match its dtype."""
 	recording = loaded_with(["1"])
 	stamps = recording.data.with_columns(internal_board_timestamp=pl.col("datetime"))
-	Recording.model_validate({**recording.to_config(), "data": stamps})
+	Recording.model_validate({**recording.model_dump(mode="json"), "data": stamps})
 
 	untyped = stamps.with_columns(pl.col("internal_board_timestamp").cast(pl.Int64))
-	with pytest.raises(ValidationError, match="schema mismatch"):
-		Recording.model_validate({**recording.to_config(), "data": untyped})
+	with pytest.raises(
+		ValidationError, match="internal_board_timestamp is Int64, expected Datetime"
+	):
+		Recording.model_validate({**recording.model_dump(mode="json"), "data": untyped})
+
+
+@pytest.mark.parametrize(
+	("change", "problem"),
+	[
+		(lambda df: df.drop("antenna"), "no antenna column"),
+		(lambda df: df.drop("inserted"), "no inserted column"),
+		(lambda df: df.with_columns(extra=pl.lit(1)), "unexpected extra column"),
+		(
+			lambda df: df.select(reversed(df.collect_schema().names())),
+			"columns must be in the order datetime, antenna, time_under, animal_id, inserted",
+		),
+	],
+)
+def test_schema_mismatch_names_each_difference(change, problem):
+	recording = loaded_with(["1"])
+	with pytest.raises(ValidationError, match=f"schema mismatch - {problem}"):
+		Recording.model_validate(
+			{**recording.model_dump(mode="json"), "data": change(recording.data)}
+		)

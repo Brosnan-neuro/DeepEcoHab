@@ -27,13 +27,15 @@ function _plotTitle(name, titles, titleIds) {
 	return index < 0 ? name : titles[index];
 }
 
-/* Format: builder/figure.py apply_format for the recording cards, with the same lapse rule
- * - an override holds only while its element still carries the automatic text it was set
- * on. What the server drew is stashed in layout.meta.dehFormat when an override first lands,
- * so clearing one restores it; a rebuilt figure arrives without the stash and is read afresh.
- * A figure's category colours are the ones its layout.colorway declares (see
- * animals.collapse_legend); a palette swaps exactly those, so a weight-scaled edge keeps its. */
+/* Format, for the recording cards and the builder alike. An override holds only while its
+ * element still carries the automatic text it was set on, so a renamed axis never ends up
+ * labelling a different quantity. What the server drew is stashed in layout.meta.dehFormat
+ * when an override first lands, so clearing one restores it; a rebuilt figure arrives without
+ * the stash and is read afresh. A figure's category colours are the ones its layout.colorway
+ * declares (see animals.collapse_legend); a palette swaps exactly those, so a weight-scaled
+ * edge keeps its. Shared y ("True"/"False") links or frees the facets' y axes. */
 const _FORMAT_BINDS = {
+	title: "title",
 	xaxis: "xaxis",
 	xmin: "xaxis",
 	xmax: "xaxis",
@@ -45,8 +47,9 @@ const _FORMAT_BINDS = {
 	cmax: "colorbar",
 	colorscale: "coloraxis",
 	palette: "colorway",
+	sharey: "sharey",
 };
-const _FORMAT_SELECTS = ["colorscale", "palette"];
+const _FORMAT_SELECTS = ["colorscale", "palette", "sharey"];
 const _FORMAT_BOUNDS = ["xmin", "xmax", "ymin", "ymax", "cmin", "cmax"];
 
 function _titleText(title) {
@@ -73,14 +76,25 @@ function _formatBase(layout) {
 	if (stash) return stash;
 	const axes = {};
 	const ranges = {};
+	const sharing = {};
 	Object.keys(layout)
 		.filter((key) => /^[xy]axis\d*$/.test(key) && layout[key].visible !== false)
 		.sort((a, b) => a.localeCompare(b, undefined, {numeric: true}))
 		.forEach((key) => {
 			axes[key] = _titleText(layout[key].title);
 			ranges[key] = {range: layout[key].range ?? null, autorange: layout[key].autorange ?? null};
+			if (key[0] === "y") {
+				sharing[key] = {matches: layout[key].matches ?? null, showticklabels: layout[key].showticklabels ?? null};
+			}
 		});
-	return {axes: axes, ranges: ranges, coloraxis: layout.coloraxis || null, colorway: layout.colorway || null};
+	return {
+		title: layout.title ?? null,
+		axes: axes,
+		ranges: ranges,
+		sharing: sharing,
+		coloraxis: layout.coloraxis || null,
+		colorway: layout.colorway || null,
+	};
 }
 
 /* Each element's automatic text: "" when drawn untitled, null when the figure has none. */
@@ -90,12 +104,17 @@ function _autoTitles(base) {
 		return texts.length ? texts.find(Boolean) || "" : null;
 	};
 	const bar = base.coloraxis;
+	const yKeys = Object.keys(base.sharing || {});
 	return {
+		title: _titleText(base.title),
 		xaxis: axis("x"),
 		yaxis: axis("y"),
-		colorbar: bar ? _titleText((bar.colorbar || {}).title) : null,
+		// A hidden bar (the network's edges) offers its scale but no title or bounds.
+		colorbar: bar && bar.showscale !== false ? _titleText((bar.colorbar || {}).title) : null,
 		coloraxis: bar ? "" : null,
 		colorway: base.colorway ? "" : null,
+		// Offered only once there are facets to share it.
+		sharey: yKeys.length > 1 ? (yKeys.some((key) => base.sharing[key].matches) ? "True" : "False") : null,
 	};
 }
 
@@ -179,6 +198,37 @@ function _recolor(data, from, to) {
 	return data.map(walk);
 }
 
+/* The rgb() colour ``scale`` draws at ``t`` in [0, 1], from hex or rgb()/rgba() stops alike. */
+function _sample(scale, t) {
+	const channels = (color) =>
+		color[0] === "#"
+			? [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16))
+			: _rgb(color).key.split(",").map(Number);
+	const upper = Math.max(1, scale.findIndex(([at]) => at >= t));
+	const [[from, low], [to, high]] = [scale[upper - 1], scale[upper]];
+	const f = to > from ? (t - from) / (to - from) : 0;
+	const [a, b] = [channels(low), channels(high)];
+	return `rgb(${a.map((c, i) => Math.round(c + (b[i] - c) * f)).join(", ")})`;
+}
+
+/* ``data`` with each line whose markers ride the colour axis resampled from ``scale``: a
+ * line cannot ride it, so the network's edges keep theirs in step by hand. Box and violin
+ * points cannot either, so the builder's Point colour bands carry their place on the scale
+ * in meta.dehScale. */
+function _followScale(data, scale) {
+	return data.map((trace) => {
+		const marker = trace.marker || {};
+		const shade = (trace.meta || {}).dehScale;
+		if (shade !== undefined) {
+			return Object.assign({}, trace, {marker: Object.assign({}, marker, {color: _sample(scale, shade)})});
+		}
+		if (!marker.coloraxis || !trace.line) return trace;
+		return Object.assign({}, trace, {
+			line: Object.assign({}, trace.line, {color: _sample(scale, marker.color[0])}),
+		});
+	});
+}
+
 /* ``fig`` with ``fmt`` drawn on it, or null when that would change nothing. */
 function _formatFigure(fig, fmt, choices) {
 	if (!fig || !fig.layout) return null;
@@ -191,6 +241,9 @@ function _formatFigure(fig, fmt, choices) {
 	const layout = Object.assign({}, fig.layout, {
 		meta: Object.assign({}, fig.layout.meta, {dehFormat: base}),
 	});
+	const title = "title" in live ? _withTitle(base, live.title).title : base.title;
+	if (title) layout.title = title;
+	else delete layout.title;
 	["x", "y"].forEach((letter) => {
 		const keys = Object.keys(base.axes).filter((key) => key[0] === letter);
 		// Facets title only their outer axes; an untitled axis gets it on the first.
@@ -203,6 +256,19 @@ function _formatFigure(fig, fmt, choices) {
 			layout[key] = _withRange(titledAxis, range === "inverted" ? null : range, (base.ranges || {})[key]);
 		});
 	});
+	Object.keys(base.sharing || {}).forEach((key, i, keys) => {
+		const drawn = base.sharing[key];
+		const want =
+			live.sharey === "False" ? {matches: null, showticklabels: true}
+			: live.sharey === "True" ? {matches: i ? keys[0].replace("axis", "") : null, showticklabels: drawn.showticklabels}
+			: drawn;
+		const axis = Object.assign({}, layout[key]);
+		Object.entries(want).forEach(([prop, value]) => (value === null ? delete axis[prop] : (axis[prop] = value)));
+		if (JSON.stringify(axis) !== JSON.stringify(layout[key])) layout[key] = axis;
+	});
+	// The data only changes along with the colour scale or colorway, so comparing layouts
+	// still decides.
+	let data = fig.data || [];
 	if (base.coloraxis) {
 		const axis = Object.assign({}, base.coloraxis);
 		if ("colorbar" in live) {
@@ -213,13 +279,14 @@ function _formatFigure(fig, fmt, choices) {
 		const range = _colorRange(live, base);
 		if (range && range !== "inverted") Object.assign(axis, range);
 		layout.coloraxis = axis;
+		if (JSON.stringify(axis.colorscale) !== JSON.stringify((fig.layout.coloraxis || {}).colorscale)) {
+			data = _followScale(data, axis.colorscale);
+		}
 	}
-	// The data only changes along with the colorway, so comparing layouts still decides.
-	let data = fig.data;
 	if (base.colorway) {
 		const colorway = _colorway(live, base, palettes);
 		if (JSON.stringify(colorway) !== JSON.stringify(fig.layout.colorway)) {
-			data = _recolor(fig.data || [], fig.layout.colorway || base.colorway, colorway);
+			data = _recolor(data, fig.layout.colorway || base.colorway, colorway);
 			layout.colorway = colorway;
 		}
 	}
@@ -241,20 +308,81 @@ function _formErrors(fmt, layout, palettes) {
 	};
 }
 
-function _flagErrors(fmt, layout, palettes) {
+function _flagErrors(fmt, layout, palettes, prefix) {
 	const dc = window.dash_clientside;
 	Object.entries(_formErrors(fmt, layout, palettes)).forEach(([key, error]) =>
-		dc.set_props({type: "rec-fmt", key: key}, {error: error})
+		dc.set_props({type: prefix + "-fmt", key: key}, {error: error})
 	);
 }
 
-// The hours slider's band and label, repainted as the handles move - the twin of
-// recording.py's _hours_band / _hours_text, which paint the first one server-side.
+/* The Format form for ``fmt`` on ``layout``, field by field in the order of ``keys``: each
+ * one's value, placeholder and whether it is off, then the palette menu. */
+function _formatForm(fmt, layout, keys, choices, prefix) {
+	const base = _formatBase(layout);
+	const auto = _autoTitles(base);
+	const live = _liveFormat(fmt, auto);
+	const hint = (key) => {
+		if (key in auto) return _plain(auto[key]) || (auto[key] === "" ? "No title" : "Not on this plot");
+		if (_FORMAT_SELECTS.includes(key)) return "Default";
+		return String((base.coloraxis || {})[key] ?? "Auto");
+	};
+	const palettes = (choices || {}).palette || {};
+	const needed = (base.colorway || []).length;
+	_flagErrors(fmt, layout, palettes, prefix);
+	return [
+		keys.map((key) => live[key] ?? (_FORMAT_SELECTS.includes(key) ? null : "")),
+		keys.map(hint),
+		keys.map((key) => auto[_FORMAT_BINDS[key]] === null),
+		Object.entries(palettes).map(([name, colors]) => ({
+			value: name,
+			label: `${name} · ${colors.length}`,
+			disabled: colors.length < needed,
+		})),
+	];
+}
+
+/* ``fmt`` after the edit that fired. Only the fields that fired are touched, so an override
+ * that has lapsed - its element shows other text now, and the form shows it empty - is kept
+ * for when that text returns; ``{prefix}-fmt-reset`` drops the lot. */
+function _editedFormat(fmt, layout, choices, prefix) {
+	const dc = window.dash_clientside;
+	const ctx = dc.callback_context;
+	const auto = _autoTitles(_formatBase(layout));
+	let next = Object.assign({}, fmt);
+
+	if (ctx.triggered_id === prefix + "-fmt-reset") {
+		if (!ctx.triggered[0].value) throw dc.PreventUpdate;
+		ctx.inputs_list[0].forEach((field) =>
+			dc.set_props(field.id, {value: _FORMAT_SELECTS.includes(field.id.key) ? null : ""})
+		);
+		next = {};
+	} else {
+		const live = _liveFormat(next, auto);
+		ctx.triggered.forEach((trigger) => {
+			// A dialog mounting fires every input at once, the reset button's among them.
+			if (trigger.prop_id[0] !== "{") return;
+			const key = JSON.parse(trigger.prop_id.slice(0, trigger.prop_id.lastIndexOf("."))).key;
+			let value = typeof trigger.value === "string" ? trigger.value.trim() : trigger.value;
+			if (_FORMAT_BOUNDS.includes(key) && typeof value !== "number") value = null;
+			if (value === "" || value === undefined || value === _plain(auto[key])) value = null;
+			if (value === (live[key] ?? null)) return;
+			if (value === null) delete next[key];
+			else next[key] = {on: auto[_FORMAT_BINDS[key]], value: value};
+		});
+	}
+
+	_flagErrors(next, layout, (choices || {}).palette, prefix);
+	return next;
+}
+
+// The twin of recording.py's _shade, which the events card uses.
 function _shade(phase, selected) {
 	const token = phase === "dark_phase" ? "--tick-dark" : "--tick-light";
 	return "color-mix(in srgb, var(" + token + ") " + (selected ? 100 : 22) + "%, transparent)";
 }
 
+// The hours slider's band as a CSS gradient. Hours count from the start_from onset, so each
+// phase is one unbroken stretch and the band never wraps around midnight.
 function _hoursBand(context, phases) {
 	const onsets = context.onsets || {};
 	const start = context.start_from;
@@ -270,6 +398,27 @@ function _hoursBand(context, phases) {
 		"linear-gradient(90deg, " + _shade(start, on(start)) + " 0 " + split + "%, " +
 		_shade(other, on(other)) + " " + split + "% 100%)"
 	);
+}
+
+// The hour boundaries a phase selection covers: one phase is its stretch of the day, both (or
+// neither, or a single-phase recording) the whole of it.
+function _phaseHours(context, phases) {
+	const onsets = context.onsets || {};
+	const start = context.start_from;
+	const other = Object.keys(onsets).find((name) => name !== start);
+	const chosen = (phases || []).filter((name) => name in onsets);
+	if (!other || chosen.length !== 1) return [0, 24];
+	const mins = (name) => Number(onsets[name].slice(0, 2)) * 60 + Number(onsets[name].slice(3, 5));
+	const split = ((((mins(other) - mins(start)) % 1440) + 1440) % 1440) / 60;
+	return chosen[0] === start ? [0, split] : [split, 24];
+}
+
+// The phases an hours window overlaps, the inverse of _phaseHours.
+function _impliedPhases(context, bounds) {
+	const start = context.start_from;
+	const other = Object.keys(context.onsets).find((name) => name !== start);
+	const split = _phaseHours(context, [start])[1];
+	return [bounds[0] < split ? start : null, bounds[1] > split ? other : null].filter(Boolean);
 }
 
 // Whether a control is at its full extent, where a card that ignores it loses nothing; the
@@ -378,11 +527,75 @@ document.addEventListener("load", function (event) {
 	}]});
 }, true);
 
-/* The update toast's Cancel (see _check_update): toast content is outside Dash's layout. */
-document.addEventListener("click", function (event) {
-	if (!event.target.closest(".deh-update-cancel")) return;
-	window.dash_clientside.set_props("notifications", {hideNotifications: ["update-available"]});
+/* Resting on a recording tab prefetches its plots (see plotRequest), so they are usually drawn
+ * by the time the click lands. The short dwell skips tabs the pointer only crosses; `at` makes
+ * a second hover of the same tab a new value. */
+const _PREFETCH_DWELL_MS = 50;
+let _hoveredTab = null;
+let _prefetchTimer = 0;
+document.addEventListener("mouseover", function (event) {
+	const tab = event.target.closest && event.target.closest('#rec-tabs [role="tab"]');
+	if (tab === _hoveredTab) return;
+	_hoveredTab = tab;
+	clearTimeout(_prefetchTimer);
+	if (!tab || tab.getAttribute("aria-selected") === "true") return;
+	_prefetchTimer = setTimeout(() => {
+		const value = tab.id.slice("rec-tabs-tab-".length);
+		window.dash_clientside.set_props("rec-hover", {data: {tab: value, at: Date.now()}});
+	}, _PREFETCH_DWELL_MS);
 });
+
+/* The update toast's buttons (see _check_update): toast content is outside Dash's layout. */
+document.addEventListener("click", function (event) {
+	const now = event.target.closest(".deh-update-now");
+	if (!now && !event.target.closest(".deh-update-cancel")) return;
+	window.dash_clientside.set_props("notifications", {hideNotifications: ["update-available"]});
+	if (now) window.dash_clientside.set_props("update-request", {data: Date.now()});
+});
+
+/* Events table: an event's name folds its bouts away. */
+function _toggleEventGroup(event) {
+	const label = event.target.closest(".deh-ev-group .deh-ev-label");
+	if (!label || (event.type === "keydown" && event.key !== "Enter" && event.key !== " ")) return;
+	event.preventDefault();
+	const collapsed = label.closest("tbody").classList.toggle("is-collapsed");
+	label.setAttribute("aria-expanded", String(!collapsed));
+}
+document.addEventListener("click", _toggleEventGroup);
+document.addEventListener("keydown", _toggleEventGroup);
+
+/* Table, habitat and builder plot cards: the maximize button fills the window with the card itself; the same
+ * button, now an X, or Escape puts it back. An open dialog holds focus, so its Escape is its own. */
+document.addEventListener("click", function (event) {
+	const button = event.target.closest(".deh-card-max");
+	if (button) button.closest(".deh-card, .deh-graph-card").classList.toggle("is-max");
+});
+document.addEventListener("keydown", function (event) {
+	if (event.key !== "Escape" || event.target.closest(".mantine-Modal-root")) return;
+	document.querySelectorAll(".deh-card.is-max").forEach((card) => card.classList.remove("is-max"));
+});
+
+/* Habitat map: an antenna opens its reads in a native popover, which dismisses itself on an
+ * outside click or Escape. data-pop is markup components.py has already escaped. */
+let _habPop = null;
+function _openAntenna(event) {
+	const ant = event.target.closest && event.target.closest(".deh-hab-ant[data-pop]");
+	if (!ant || (event.type === "keydown" && event.key !== "Enter" && event.key !== " ")) return;
+	event.preventDefault();
+	if (!_habPop) {
+		_habPop = document.body.appendChild(document.createElement("div"));
+		_habPop.className = "deh-hab-pop";
+		_habPop.popover = "auto";
+	}
+	_habPop.innerHTML = ant.dataset.pop;
+	const at = ant.getBoundingClientRect();
+	_habPop.style.left = `${at.left + at.width / 2}px`;
+	_habPop.style.top = `${at.bottom + 6}px`;
+	_habPop.showPopover();
+}
+document.addEventListener("click", _openAntenna);
+document.addEventListener("keydown", _openAntenna);
+document.addEventListener("scroll", () => _habPop && _habPop.hidePopover(), true);
 
 
 window.dash_clientside.deh = {
@@ -460,6 +673,22 @@ window.dash_clientside.deh = {
 	filterControls: function (bounds, phases, colorBy, labelBy, groupMean, controls, context) {
 		const dc = window.dash_clientside;
 		const disabled = colorBy === "animal_id";
+		let hoursOut = dc.no_update;
+		let phasesOut = dc.no_update;
+		// Hours and phase chips stay in step: the chip that was touched moves the other.
+		if (context && context.onsets && Object.keys(context.onsets).length > 1) {
+			const implied = _impliedPhases(context, bounds);
+			const same = implied.length === (phases || []).length && implied.every((p) => phases.indexOf(p) >= 0);
+			if (!same) {
+				if (dc.callback_context.triggered_id === "rec-phases") {
+					bounds = _phaseHours(context, phases);
+					hoursOut = bounds;
+				} else if (dc.callback_context.triggered_id === "rec-hours") {
+					phases = implied;
+					phasesOut = implied;
+				}
+			}
+		}
 		const merged = Object.assign({}, controls || {}, {
 			hours: [bounds[0], bounds[1] - 1],
 			phases: phases || [],
@@ -479,7 +708,7 @@ window.dash_clientside.deh = {
 				children: whole ? "whole day" : bounds[1] - bounds[0] + " of 24 h",
 			});
 		}
-		return [merged, disabled];
+		return [merged, disabled, hoursOut, phasesOut];
 	},
 
 	// Only a figure whose event shapes/annotations show the wrong way is set, so the switch
@@ -501,30 +730,47 @@ window.dash_clientside.deh = {
 
 	// A card is rebuilt only while its tab shows, and only for inputs it was not already
 	// drawn with: a hidden tab catches up when opened, and returning to one costs nothing.
+	// A hovered tab is also fetched, on the hover alone: the controls still rebuild only the
+	// showing tab, and a prefetched card they have since outdated catches up like any hidden one.
 	// Each store starts as {tab, uses}: the tab its card sits on and the controls its plot
 	// takes, so a control it ignores never rebuilds it - it shows that control's badge instead.
 	// One run serves every card and sets only the stores and badges that change: every callback
 	// run and every write re-runs the renderer's per-component checks, so one callback per card
 	// made each tab switch several times dearer.
-	plotRequest: function (context, controls, tab, theme) {
+	plotRequest: function (context, controls, tab, theme, _opts, hover) {
 		const dc = window.dash_clientside;
 		if (!context || !controls) return;
+		const hovered = dc.callback_context.triggered_id === "rec-hover" && hover ? hover.tab : null;
 		const opts = {};
 		dc.callback_context.inputs_list[4].forEach((option) => {
 			(opts[option.id.plot] = opts[option.id.plot] || {})[option.id.option] = option.value;
 		});
 		dc.callback_context.states_list[0].forEach((store) => {
 			const previous = store.value || {};
-			if (previous.tab !== tab) return;
+			if (previous.tab !== tab && previous.tab !== hovered) return;
 			const used = {};
 			(previous.uses || []).forEach((key) => (used[key] = controls[key]));
-			const request = {tab: tab, uses: previous.uses, context: context, controls: used, theme: theme, opts: opts[store.id.plot] || {}};
+			const request = {tab: previous.tab, uses: previous.uses, context: context, controls: used, theme: theme, opts: opts[store.id.plot] || {}};
 			if (JSON.stringify(request) !== JSON.stringify(previous)) dc.set_props(store.id, {data: request});
 		});
 		(dc.callback_context.states_list[1] || []).forEach((badge) => {
 			const hidden = _unfiltered[badge.id.control](controls, context);
 			if (hidden !== badge.value) dc.set_props(badge.id, {hidden: hidden});
 		});
+	},
+
+	// A zoom or pan asks for the timeline's bars again at the new span's resolution, a reset
+	// (null) for the whole window. Any other relayout - a resize, a Format edit - leaves it be.
+	timelineZoom: function (relayout, current) {
+		const r = relayout || {};
+		let range;
+		if (r["xaxis.autorange"]) range = null;
+		else if (r["xaxis.range"]) range = r["xaxis.range"];
+		else if ("xaxis.range[0]" in r) range = [r["xaxis.range[0]"], r["xaxis.range[1]"]];
+		if (range === undefined || JSON.stringify(range) === JSON.stringify(current ?? null)) {
+			return window.dash_clientside.no_update;
+		}
+		return range;
 	},
 
 	// The cohort cards follow colour alone, so the other controls leave them be.
@@ -535,11 +781,19 @@ window.dash_clientside.deh = {
 
 	// Also the only writer of rec-tab, which plotRequest reads instead of rec-tabs itself:
 	// this fires only when the tabs exist, so it stays a safe place to touch them.
-	switchTab: function (tab, search) {
-		const params = new URLSearchParams(search || "");
-		if (params.get("tab") === tab) return [window.dash_clientside.no_update, tab];
-		params.set("tab", tab);
-		return ["?" + params.toString(), tab];
+	// The tab reaches the address bar, not url.search: that write would re-run _resolve on the
+	// server, and the renderer holds plotRequest, downstream of its outputs, until it returns.
+	// So url.search lags on the tab; _switch_recording takes it from rec-tab instead, and the
+	// sidebar link, which pageScroll only rewrites on a URL change, is kept current here.
+	switchTab: function (tab) {
+		const params = new URLSearchParams(location.search);
+		if (params.get("tab") !== tab) {
+			params.set("tab", tab);
+			const href = location.pathname + "?" + params.toString();
+			history.replaceState(history.state, "", href);
+			window.dash_clientside.set_props({type: "nav-link", index: "/recording"}, {href: href});
+		}
+		return tab;
 	},
 
 	windowControl: function (granularity, window_, context, controls) {
@@ -547,11 +801,15 @@ window.dash_clientside.deh = {
 		if (!context) throw dc.PreventUpdate;
 		const bound = granularity === "day" ? context.days : context.phases;
 		const value = dc.callback_context.triggered_id === "rec-granularity" ? [1, bound] : window_;
-		const step = bound > 12 ? 2 : 1;  // mirrors _window_marks
-		const marks = [];
-		for (let v = 1; v <= bound; v += 1) {
-			if ((v - 1) % step === 0 || v === bound) marks.push({value: v, label: String(v)});
+		// Labels on round numbers, as many as fit the track's 220px minimum at their width;
+		// one crowding either end yields to the end's own label.
+		const most = bound < 100 ? 12 : 8;
+		const step = [1, 2, 5, 10, 20, 50, 100, 200, 500].find((s) => bound / s <= most) || 1000;
+		const marks = [{value: 1, label: "1"}];
+		for (let v = step; v < bound; v += step) {
+			if (v - 1 >= step / 2 && bound - v >= step / 2) marks.push({value: v, label: String(v)});
 		}
+		if (bound > 1) marks.push({value: bound, label: String(bound)});
 		// set_props, like the hours readout: the label is a readout of the slider, not a control.
 		dc.set_props("rec-window-label", {
 			children: (granularity === "day" ? "Days " : "Phases ") + value[0] + " → " + value[1],
@@ -563,9 +821,22 @@ window.dash_clientside.deh = {
 		return [1, bound, marks, value, merged];
 	},
 
+	// The card's plot is drawn at its on-page size and scaled up whole, so fonts, legend and
+	// colorbar keep their proportions instead of shrinking relative to a larger canvas.
 	fullscreen: function (_clicks, figures, ids, titles, titleIds) {
 		const picked = _pickPlot(figures, ids);
-		return [true, _plotTitle(picked.name, titles, titleIds), picked.figure];
+		const card = document.getElementById(JSON.stringify({plot: picked.name, type: "plot"}));
+		const width = card.offsetWidth;
+		const height = card.offsetHeight;
+		const scale = Math.min((window.innerWidth - 32) / width, (window.innerHeight - 120) / height);
+		const layout = Object.assign({}, picked.figure.layout, {width: width, height: height, autosize: false});
+		return [
+			true,
+			_plotTitle(picked.name, titles, titleIds),
+			Object.assign({}, picked.figure, {layout: layout}),
+			{width: width + "px", height: height + "px", transform: "scale(" + scale + ")", transformOrigin: "0 0"},
+			{width: width * scale + "px", height: height * scale + "px", margin: "auto", overflow: "hidden"},
+		];
 	},
 
 	openExport: function (_clicks, figures, ids, titles, titleIds, context) {
@@ -581,67 +852,21 @@ window.dash_clientside.deh = {
 	openFormat: function (_clicks, figures, ids, titles, titleIds, formats, choices) {
 		const dc = window.dash_clientside;
 		const picked = _pickPlot(figures, ids);
-		const layout = picked.figure.layout || {};
-		const base = _formatBase(layout);
-		const auto = _autoTitles(base);
-		const fmt = (formats || {})[picked.name];
-		const live = _liveFormat(fmt, auto);
 		const keys = dc.callback_context.outputs_list[3].map((field) => field.id.key);
-		const hint = (key) => {
-			if (key in auto) return _plain(auto[key]) || (auto[key] === "" ? "No title" : "Not on this plot");
-			if (_FORMAT_SELECTS.includes(key)) return "Default";
-			return String((base.coloraxis || {})[key] ?? "Auto");
-		};
-		const palettes = (choices || {}).palette || {};
-		const needed = (base.colorway || []).length;
-		_flagErrors(fmt, layout, palettes);
 		return [
 			true,
 			"Format · " + _plotTitle(picked.name, titles, titleIds),
 			picked.name,
-			keys.map((key) => live[key] ?? (_FORMAT_SELECTS.includes(key) ? null : "")),
-			keys.map(hint),
-			keys.map((key) => auto[_FORMAT_BINDS[key]] === null),
-			Object.entries(palettes).map(([name, colors]) => ({
-				value: name,
-				label: `${name} · ${colors.length}`,
-				disabled: colors.length < needed,
-			})),
+			..._formatForm((formats || {})[picked.name], picked.figure.layout || {}, keys, choices, "rec"),
 		];
 	},
 
-	// Only the fields that fired are touched, so an override that has lapsed - its element
-	// shows other text now, and the form shows it empty - is kept for when that text returns.
 	editFormat: function (_values, _reset, plot, formats, figures, ids, choices) {
 		const dc = window.dash_clientside;
-		const ctx = dc.callback_context;
 		const index = ids.findIndex((id) => id.plot === plot);
 		if (index < 0 || !figures[index]) throw dc.PreventUpdate;
-		const layout = figures[index].layout || {};
-		const auto = _autoTitles(_formatBase(layout));
 		const next = Object.assign({}, formats);
-		const fmt = Object.assign({}, next[plot]);
-
-		if (ctx.triggered_id === "rec-fmt-reset") {
-			if (!ctx.triggered[0].value) throw dc.PreventUpdate;
-			ctx.inputs_list[0].forEach((field) =>
-				dc.set_props(field.id, {value: _FORMAT_SELECTS.includes(field.id.key) ? null : ""})
-			);
-			Object.keys(fmt).forEach((key) => delete fmt[key]);
-		} else {
-			const live = _liveFormat(fmt, auto);
-			ctx.triggered.forEach((trigger) => {
-				const key = JSON.parse(trigger.prop_id.slice(0, trigger.prop_id.lastIndexOf("."))).key;
-				let value = typeof trigger.value === "string" ? trigger.value.trim() : trigger.value;
-				if (_FORMAT_BOUNDS.includes(key) && typeof value !== "number") value = null;
-				if (value === "" || value === undefined || value === _plain(auto[key])) value = null;
-				if (value === (live[key] ?? null)) return;
-				if (value === null) delete fmt[key];
-				else fmt[key] = {on: auto[_FORMAT_BINDS[key]], value: value};
-			});
-		}
-
-		_flagErrors(fmt, layout, (choices || {}).palette);
+		const fmt = _editedFormat(next[plot], figures[index].layout || {}, choices, "rec");
 		if (Object.keys(fmt).length) next[plot] = fmt;
 		else delete next[plot];
 		return JSON.stringify(next) === JSON.stringify(formats || {}) ? dc.no_update : next;
@@ -689,6 +914,15 @@ window.dash_clientside.deh = {
 		const trigger = dc.callback_context.triggered[0];
 		if (!trigger || !trigger.value) return dc.no_update;
 		return {id: dc.callback_context.triggered_id, at: Date.now()};
+	},
+
+	// The save dialog pictures the builder plot as it stands, Format included, for the preset
+	// dialog's preview: its on-screen layout, scaled to 800 px wide.
+	capturePresetThumb: function (opened) {
+		const gd = document.querySelector("#builder-graph .js-plotly-plot");
+		if (!opened || !gd || !window.Plotly) return null;
+		const {width, height} = gd._fullLayout;
+		return window.Plotly.toImage(gd, {format: "png", width, height, scale: 800 / width});
 	},
 
 	// Dash carries no SVG components, so the habitat map arrives as markup on a data attribute
@@ -741,6 +975,33 @@ window.dash_clientside.deh = {
 		return !kind || kind === current ? window.dash_clientside.no_update : kind;
 	},
 
+	// The builder's Format is the cards', kept in its state so a preset saves it.
+	openBuilderFormat: function (clicks, figure, state, choices) {
+		const dc = window.dash_clientside;
+		if (!clicks || !figure) throw dc.PreventUpdate;
+		const keys = dc.callback_context.outputs_list[1].map((field) => field.id.key);
+		return [true, ..._formatForm((state || {}).format, figure.layout || {}, keys, choices, "builder")];
+	},
+
+	// Only while open: the dialog mounts with the page, empty until opened, and those empty
+	// fields firing would read as clearing every override.
+	editBuilderFormat: function (_values, _reset, opened, state, figure, choices) {
+		const dc = window.dash_clientside;
+		if (!opened || !state || !figure) throw dc.PreventUpdate;
+		const next = Object.assign({}, state);
+		const fmt = _editedFormat(state.format, figure.layout || {}, choices, "builder");
+		// No empty dict left behind, or a preset would read as edited after a reset.
+		if (Object.keys(fmt).length) next.format = fmt;
+		else delete next.format;
+		return JSON.stringify(next) === JSON.stringify(state) ? dc.no_update : next;
+	},
+
+	// Set rather than returned, as applyFormat does: the figure is its Input too.
+	applyBuilderFormat: function (state, figure, choices) {
+		const next = _formatFigure(figure, (state || {}).format, choices);
+		if (next) window.dash_clientside.set_props("builder-graph", {figure: next});
+	},
+
 	/* --- projects --------------------------------------------------------- */
 
 	// The selection lives in the browser: a tick only repaints checkboxes, so nothing here is
@@ -776,7 +1037,7 @@ window.dash_clientside.deh = {
 	paintSelection: function (selection) {
 		const dc = window.dash_clientside;
 		const key = (id) => JSON.stringify([id.project, id.index]);
-		const [boxes, heads] = dc.callback_context.states_list;
+		const [boxes, heads, removes] = dc.callback_context.states_list;
 		const keys = new Set((selection || []).map((pair) => JSON.stringify(pair)));
 		const paint = (box, checked) => box.value === checked || dc.set_props(box.id, {checked});
 		boxes.forEach((box) => paint(box, keys.has(key(box.id))));
@@ -784,10 +1045,24 @@ window.dash_clientside.deh = {
 			const mine = boxes.filter((box) => box.id.project === head.id.index);
 			paint(head, mine.length > 0 && mine.every((box) => keys.has(key(box.id))));
 		});
+		removes.forEach((button) => {
+			const hidden = (selection || []).filter(([project]) => project === button.id.index).length < 2;
+			button.value === hidden || dc.set_props(button.id, {hidden});
+		});
 	},
 
 	resetProgress: function () {
 		return null;
+	},
+
+	/* Reinstate popover: select-all ticks every delisted name; ticking names repaints select-all. */
+	selectDelisted: function (all, picked, names) {
+		const dc = window.dash_clientside;
+		if (dc.callback_context.triggered_id.type === "reinstate-all") {
+			return [all ? names : [], dc.no_update, false];
+		}
+		const n = picked.length;
+		return [dc.no_update, n === names.length, n > 0 && n < names.length];
 	},
 
 	resetParams: function (_clicks, defaults) {

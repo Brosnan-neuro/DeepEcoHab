@@ -356,6 +356,10 @@ code {
 	cursor: pointer;
 }
 
+.deh-btn[hidden] {
+	display: none;
+}
+
 .deh-btn:hover {
 	background: var(--sunken);
 }
@@ -651,6 +655,12 @@ code {
 	max-width: 34ch;
 	color: var(--ink-3);
 	font-size: 12.5px;
+}
+
+.deh-table-cell {
+	display: flex;
+	align-items: center;
+	gap: 4px;
 }
 
 .deh-an {
@@ -961,7 +971,13 @@ code {
 	overflow-y: auto;
 }
 
-.mantine-Menu-dropdown.deh-menu {
+.deh-menu .mantine-Checkbox-input:not(:checked, [data-indeterminate]) {
+	border-color: var(--ink-3);
+	background: var(--surface);
+}
+
+.mantine-Menu-dropdown.deh-menu,
+.mantine-Popover-dropdown.deh-menu {
 	min-width: 210px;
 	max-width: 280px;
 	padding: 4px;
@@ -969,6 +985,11 @@ code {
 	border-radius: 10px;
 	background: var(--surface);
 	box-shadow: var(--shadow-lg);
+}
+
+.mantine-Popover-dropdown.deh-menu {
+	max-width: none;
+	padding: 12px;
 }
 
 .deh-menu .mantine-Menu-item {
@@ -1054,6 +1075,7 @@ code {
 
 .deh-update-actions {
 	display: flex;
+	gap: 8px;
 	justify-content: flex-end;
 	margin-top: 8px;
 }
@@ -1083,35 +1105,82 @@ code {
 	container-name: deh-main;
 }
 
+/* Download floats top right and the facts flow around it as one inline box: beside the
+   picker when they fit, otherwise on a full-width line under both, clear of the button.
+   The content decides where the head breaks, not a breakpoint. */
 .deh-rec-head {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 10px 16px;
+	display: flow-root;
 	margin-bottom: 12px;
 }
 
-.deh-rec-pick {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	min-width: 0;
+/* The Menu wraps its target in a bare div, which is what has to float. */
+.deh-rec-head > :has(> .deh-btn) {
+	float: right;
+	margin: 3px 0 0 12px;
 }
 
+.deh-rec-pick {
+	display: inline-flex;
+	vertical-align: top;
+	align-items: center;
+	gap: 4px;
+	margin-right: 12px;
+}
+
+/* Every fact is the same 28px box with the same padding, button or not, so a wrapped line
+   keeps the rhythm and left edge of the first; the negative margin puts the first icon of
+   a wrapped line on the page's left edge, and the top margin centres a 28px line on the
+   picker's 36px. A divider hangs in the gap before each group, and the clip hides the one
+   leading each line. */
 .deh-rec-meta {
-	display: flex;
+	display: inline-flex;
+	vertical-align: top;
 	flex-wrap: wrap;
-	gap: 6px 18px;
+	gap: 2px 21px;
+	margin: 4px 0 0 -6px;
+	overflow: clip;
+	overflow-clip-margin: 4px;
 	color: var(--ink-2);
 	font-size: 13px;
 }
 
-.deh-rec-meta > span,
-.deh-rec-meta > button {
+.deh-meta-group {
+	position: relative;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px 4px;
+	min-width: 0;
+}
+
+.deh-meta-group::before {
+	content: "";
+	position: absolute;
+	top: 7px;
+	left: -11px;
+	width: 1px;
+	height: 14px;
+	background: var(--line-strong);
+}
+
+.deh-rec-meta .deh-meta-group > * {
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
+	height: 28px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: 6px;
+	font-size: 13px;
 	white-space: nowrap;
+}
+
+.deh-meta-group > span {
+	color: var(--ink-2);
+}
+
+/* The clickable facts show it on hover. */
+.deh-meta-group > button:hover:not(:disabled) {
+	background: var(--sunken);
 }
 
 .deh-controls {
@@ -1144,8 +1213,10 @@ code {
 	box-shadow: var(--shadow);
 }
 
+/* Keyboard focus and an open select or popover (their dropdowns portal out of the bar) hold
+   it down; a mouse click leaves focus behind but not :focus-visible, so the bar still tucks. */
 .deh-controls.is-tucked:hover,
-.deh-controls.is-tucked:focus-within {
+.deh-controls.is-tucked:has(:focus-visible, [aria-expanded="true"]) {
 	transform: none;
 	box-shadow: var(--shadow-lg);
 }
@@ -1163,7 +1234,7 @@ code {
 }
 
 .deh-controls.is-tucked:hover::after,
-.deh-controls.is-tucked:focus-within::after {
+.deh-controls.is-tucked:has(:focus-visible, [aria-expanded="true"])::after {
 	display: none;
 }
 
@@ -1234,6 +1305,16 @@ code {
 
 .deh-tabs-gap {
 	margin-top: 14px;
+}
+
+/* Mantine hides an inactive panel with an inline display: none, where a plot prefetched into
+   it draws at Plotly's 700 px fallback and only snaps to its card on reveal. Laid out but
+   unseen, it draws at its real width. */
+#rec-tabs > .mantine-Tabs-panel[style*="display: none"] {
+	display: block !important;
+	visibility: hidden;
+	height: 0;
+	overflow: hidden;
 }
 
 .deh-mini-strip {
@@ -1315,6 +1396,36 @@ code {
 
 .deh-card[data-rows="2"] {
 	grid-row: span 2;
+}
+
+/* Under Mantine's modals (z-index 200), so a notes dialog opened from a row still shows. */
+.deh-card.is-max,
+.deh-graph-card.is-max {
+	position: fixed;
+	inset: 0;
+	z-index: 150;
+	border: 0;
+	border-radius: 0;
+}
+
+.deh-card.is-max .deh-cohort-table {
+	max-height: none !important;
+}
+
+.deh-card.is-max .deh-hab {
+	flex: 1;
+	min-height: 0;
+	height: auto !important;
+	padding-bottom: 14px;
+}
+
+.deh-card-max .deh-ic + .deh-ic,
+.is-max .deh-card-max .deh-ic:first-child {
+	display: none;
+}
+
+.is-max .deh-card-max .deh-ic + .deh-ic {
+	display: inline-block;
 }
 
 @container deh-main (max-width: 900px) {
@@ -1478,13 +1589,6 @@ code {
 	letter-spacing: -0.02em;
 }
 
-.deh-q-note {
-	margin: 0;
-	padding: 10px 16px 14px;
-	color: var(--ink-3);
-	font-size: 12.5px;
-}
-
 .deh-cohort-table {
 	flex: 1;
 	min-height: 0;
@@ -1510,6 +1614,14 @@ code {
 	align-items: center;
 	gap: 6px 12px;
 	margin: 14px 16px 4px;
+}
+
+/* Under the Detection quality tiles: full-bleed rule above, padding in place of margin. */
+.deh-tiles + .deh-ev-strip {
+	grid-template-columns: max-content minmax(0, 1fr);
+	margin: 0;
+	padding: 14px 16px 10px;
+	border-top: 1px solid var(--line);
 }
 
 .deh-ev-label {
@@ -1578,6 +1690,26 @@ code {
 
 .deh-ev-group > td {
 	background: var(--sunken);
+}
+
+.deh-ev-group .deh-ev-label {
+	cursor: pointer;
+	user-select: none;
+}
+
+.deh-ev-group .deh-ev-label::after {
+	content: "▾";
+	margin-left: auto;
+	color: var(--ink-3);
+	transition: transform 0.15s;
+}
+
+.is-collapsed .deh-ev-group .deh-ev-label::after {
+	transform: rotate(-90deg);
+}
+
+.deh-ev-table tbody.is-collapsed > tr:not(.deh-ev-group) {
+	display: none;
 }
 
 /* Bouts sit under their event's name, past the swatch. */
@@ -1652,26 +1784,27 @@ code {
 }
 
 .deh-presets {
-	display: flex;
-	gap: 8px;
-	overflow-x: auto;
-	margin-bottom: 12px;
-	padding-bottom: 4px;
+	display: grid;
+	grid-template-columns: 280px 1fr;
+	gap: 16px;
+	height: min(660px, 76vh);
+	padding: 16px;
 }
 
-/* Covers DMC's MenuTarget wrapper div around the event-slot preset card too, which a
-   .deh-preset selector can't reach since that div, not .deh-preset, is the direct child. */
-.deh-presets > * {
-	flex: 0 0 224px;
+.deh-preset-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	overflow-y: auto;
+	padding-right: 4px;
 }
 
 .deh-preset {
 	position: relative;
 	display: flex;
-	flex: 0 0 224px;
+	flex: none;
 	flex-direction: column;
 	gap: 3px;
-	height: 76px;
 	padding: 10px 12px;
 	border: 1px solid var(--line);
 	border-radius: 10px;
@@ -1698,18 +1831,10 @@ code {
 	font-weight: 600;
 }
 
-.deh-preset .deh-sub {
-	display: -webkit-box;
-	overflow: hidden;
-	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 1;
-}
-
 .deh-preset-scope {
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
-	margin-top: auto;
 	color: var(--ink-3);
 	font: 11px var(--mono);
 }
@@ -1725,15 +1850,58 @@ code {
 	right: 4px;
 }
 
-.deh-preset-add {
-	flex-basis: 150px;
-	flex-direction: row;
+.deh-preset-preview {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-width: 0;
+}
+
+.deh-preset-about b {
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.deh-preset-about p {
+	margin: 4px 0 0;
+	color: var(--ink-2);
+	font-size: 13.5px;
+}
+
+.deh-preset-shot {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
 	align-items: center;
 	justify-content: center;
 	gap: 6px;
-	border-style: dashed;
-	color: var(--ink-2);
-	font-size: 13.5px;
+	min-height: 0;
+	margin: 0;
+	padding: 8px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: var(--sunken);
+}
+
+.deh-preset-shot img {
+	min-height: 0;
+	max-width: 100%;
+	max-height: 100%;
+	object-fit: contain;
+	border-radius: 6px;
+}
+
+.deh-preset-shot figcaption {
+	color: var(--ink-3);
+	font: 11px var(--mono);
+}
+
+.deh-preset-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
 }
 
 /* The builder reaches the bottom of the window: while its page shows, main and every wrapper
@@ -1749,7 +1917,20 @@ code {
 	display: grid;
 	flex: 1;
 	grid-template-columns: 236px minmax(0, 1fr) 236px;
+	align-content: start;
 	gap: 14px;
+}
+
+/* The canvas sets the row height; the rails stretch to it and scroll their lists. */
+.deh-builder .deh-rail {
+	contain: size;
+}
+
+#builder-palette,
+#builder-filters {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
 }
 
 .deh-rail {
@@ -1970,21 +2151,23 @@ code {
 
 .deh-graph-card {
 	display: flex;
-	flex: 1;
 	flex-direction: column;
-	min-height: 440px;
+	aspect-ratio: 4 / 3;
 	padding: 8px;
 	border: 1px solid var(--line);
 	border-radius: 12px;
 	background: var(--surface);
 }
 
-/* The card stretches to the taller rail, so the plot fills it. `contain: size` keeps the
-   drawn plot out of the row height, or the row could never shrink back after a resize. */
+/* `contain: size` keeps the drawn plot out of the card's height, or the card could never
+   shrink back after a resize. */
 .deh-graph-card > .dash-graph {
 	flex: 1;
-	min-height: 420px;
 	contain: size;
+}
+
+.deh-graph-card.is-max {
+	aspect-ratio: auto;
 }
 
 .deh-graph-head {
@@ -2019,6 +2202,10 @@ code {
 .deh-filter-block + .deh-filter-block {
 	padding-top: 10px;
 	border-top: 1px solid var(--line);
+}
+
+.deh-seg-row:empty {
+	display: none;
 }
 
 .deh-seg-row {
@@ -2062,6 +2249,7 @@ code {
 	.deh-builder .deh-filters {
 		grid-column: 2;
 		grid-row: 1;
+		contain: none;
 	}
 
 	.deh-builder .deh-canvas {
@@ -2081,6 +2269,7 @@ code {
 	.deh-builder .deh-canvas {
 		grid-column: auto;
 		grid-row: auto;
+		contain: none;
 	}
 }
 
@@ -2170,6 +2359,53 @@ code {
 	font: 600 7px var(--mono);
 	text-anchor: middle;
 	dominant-baseline: central;
+}
+
+.deh-hab-ant {
+	cursor: pointer;
+	outline: none;
+}
+
+.deh-hab-ant:hover circle,
+.deh-hab-ant:focus-visible circle {
+	stroke-width: 3;
+}
+
+/* Anchored under the antenna by deh; a popover's UA inset/margin would centre it instead. */
+.deh-hab-pop {
+	position: fixed;
+	inset: auto;
+	margin: 0;
+	translate: -50% 0;
+	display: none;
+	grid-template-columns: auto auto;
+	gap: 2px 14px;
+	padding: 8px 12px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--surface);
+	box-shadow: var(--shadow-lg);
+	color: var(--ink);
+	font-size: 12px;
+}
+
+.deh-hab-pop:popover-open {
+	display: grid;
+}
+
+.deh-hab-pop b {
+	grid-column: 1 / -1;
+	margin-bottom: 4px;
+	font-weight: 600;
+}
+
+.deh-hab-pop span:nth-child(even) {
+	color: var(--ink-3);
+}
+
+.deh-hab-pop span:nth-child(odd) {
+	font: 600 12px var(--mono);
+	text-align: right;
 }
 
 .deh-hab-ant.warn circle {

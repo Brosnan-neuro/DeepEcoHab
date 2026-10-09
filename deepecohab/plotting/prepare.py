@@ -1,3 +1,4 @@
+import datetime as dt
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -158,11 +159,6 @@ def window_filter(
 	return expr
 
 
-def _bins(days_range: tuple[int, int]) -> int:
-	"""Number of window units the selection spans, for the SEM denominator."""
-	return days_range[1] - days_range[0] + 1
-
-
 def _matrix(
 	frame: pl.DataFrame,
 	on: str,
@@ -234,40 +230,93 @@ def prep_timeline(
 	days_range: tuple[int, int],
 	granularity: Granularity,
 	hours_range: tuple[int, int] | None = None,
+	x_range: tuple[str, str] | None = None,
 ) -> pl.DataFrame:
 	"""Every animal's position intervals within the selected window, as timeline bars.
 
 	Reads ``main_df`` directly rather than a downstream table, so each row is one real
 	visit - a registration's ``time_spent`` is the gap since the animal's previous one,
-	so it ran from ``datetime - time_spent`` to ``datetime``. Consecutive registrations
-	at the same position - repeat triggers of one antenna pair mid-visit - are merged
-	into a single bar, or the strip would carry orders of magnitude more bars than there
-	were actual visits.
+	so it ran from ``datetime - time_spent`` to ``datetime``.
+
+	A week holds hundreds of thousands of registrations, nearly all narrower than a
+	pixel, so the span on show - the window, or ``x_range`` once zoomed in - is cut into
+	2000 buckets, about one per pixel of a full-width card. Each bucket takes the
+	position the animal spent most of it in, undefined included, and neighbouring buckets
+	at one position merge into a single bar, trimmed to the defined visits it covers - the
+	recording's ends and undefined gaps rarely fall on a bucket edge. Undefined bars are
+	then dropped, so a gap wider than a bucket or two always shows. Times, ``x_range``
+	included, are naive wall-clock, as plotly draws them.
 	"""
-	return (
+	visits = (
 		context.table("main_df")
 		.lazy()
 		.filter(window_filter(days_range, granularity, hours_range))
-		.with_columns(
+		.select(
+			"animal_id",
 			pl.col("position").cast(pl.String).replace(context.tunnels_map),
-			(pl.col("datetime") - pl.col("time_spent")).alias("start"),
+			(pl.col("datetime") - pl.col("time_spent"))
+			.dt.replace_time_zone(None)
+			.dt.epoch("ms")
+			.alias("start"),
+			pl.col("datetime").dt.replace_time_zone(None).dt.epoch("ms").alias("end"),
 		)
-		.filter(
-			pl.col("position") != Layout.UNDEFINED,
-			pl.col("time_spent") > pl.duration(microseconds=0),
+	)
+	defined = pl.col("position") != Layout.UNDEFINED
+	if x_range is not None:
+		low, high = (pl.lit(dt.datetime.fromisoformat(edge)).dt.epoch("ms") for edge in x_range)
+		visits = visits.filter(pl.col("end") > low, pl.col("start") < high).with_columns(
+			pl.col("start").clip(low), pl.col("end").clip(upper_bound=high)
 		)
-		.sort("animal_id", "start")
+
+	return (
+		visits.filter(pl.col("end") > pl.col("start"))
+		.with_columns(width=((pl.col("end").max() - pl.col("start").min()) // 2000).clip(1))
 		.with_columns(
-			(pl.col("position") != pl.col("position").shift(1))
-			.over("animal_id")
+			bucket=pl.int_ranges(
+				pl.col("start") // pl.col("width"), (pl.col("end") - 1) // pl.col("width") + 1
+			)
+		)
+		.explode("bucket", empty_as_null=False)
+		.with_columns(
+			overlap=pl.min_horizontal("end", (pl.col("bucket") + 1) * pl.col("width"))
+			- pl.max_horizontal("start", pl.col("bucket") * pl.col("width"))
+		)
+		.group_by("animal_id", "bucket", "position")
+		.agg(
+			pl.col("overlap").sum(),
+			pl.col("width").first(),
+			pl.col("start").min(),
+			pl.col("end").max(),
+		)
+		.group_by("animal_id", "bucket")
+		.agg(
+			pl.col("position").sort_by("overlap", "position").last(),
+			pl.col("width").first(),
+			pl.col("start").filter(defined).min(),
+			pl.col("end").filter(defined).max(),
+		)
+		.sort("animal_id", "bucket")
+		.with_columns(
+			(
+				(pl.col("position") != pl.col("position").shift(1))
+				| (pl.col("bucket") != pl.col("bucket").shift(1) + 1)
+			)
 			.fill_null(True)
 			.cum_sum()
 			.over("animal_id")
 			.alias("run")
 		)
 		.group_by("animal_id", "position", "run")
-		.agg(pl.col("start").min(), pl.col("datetime").max().alias("end"))
-		.select("animal_id", "position", "start", "end")
+		.agg(
+			start=pl.max_horizontal(
+				pl.col("bucket").min() * pl.col("width").first(), pl.col("start").min()
+			),
+			end=pl.min_horizontal(
+				(pl.col("bucket").max() + 1) * pl.col("width").first(), pl.col("end").max()
+			),
+		)
+		.filter(defined)
+		.select("animal_id", "position", pl.from_epoch("start", "ms"), pl.from_epoch("end", "ms"))
 		.sort("animal_id", "start")
 		.collect(engine="in-memory")
 	)
@@ -278,7 +327,12 @@ def prep_ranking_over_time(
 	days_range: tuple[int, int],
 	granularity: Granularity,
 ) -> pl.DataFrame:
-	"""Aggregate animal ordinal rankings by window unit, hour, and datetime."""
+	"""Aggregate animal ordinal rankings by window unit, hour, and datetime.
+
+	A match moves only its two animals, yet ``ranking`` repeats every animal's rating
+	after it. Only the rows where an animal's rating changes are kept, plus its last
+	one: the step line holds each rating until the next change anyway.
+	"""
 	return (
 		context.table("ranking")
 		.lazy()
@@ -289,6 +343,10 @@ def prep_ranking_over_time(
 			pl.when(pl.first(granularity) == 1)
 			.then(pl.first("ordinal"))
 			.otherwise(pl.last("ordinal"))
+		)
+		.filter(
+			(pl.col("ordinal").diff().over("animal_id") != 0).fill_null(True)
+			| (pl.col("datetime") == pl.col("datetime").max().over("animal_id"))
 		)
 		.collect(engine="in-memory")
 	)
@@ -353,7 +411,7 @@ def prep_polar(
 	hours_range: tuple[int, int] | None = None,
 ) -> pl.DataFrame:
 	"""Z-score every feature metric onto one comparable polar scale."""
-	n_bins = _bins(days_range)
+	n_bins = days_range[1] - days_range[0] + 1
 
 	return (
 		context.table("feature_df")
@@ -614,14 +672,15 @@ def prep_activity(
 	granularity: Granularity,
 	agg: Aggregation,
 	positions: list[str],
+	columns: dict[str, str],
 	hours_range: tuple[int, int] | None = None,
 ) -> pl.DataFrame:
-	"""Visits and time spent per position and animal, ``time`` a raw Duration.
+	"""``activity_df`` columns summed per position and animal, keyed ``{output: source}``.
 
 	A summed plot draws one row per animal and position; a mean plot keeps the
 	window units so the box has a distribution to show. Aggregating here rather
 	than in the plot is what keeps the hover text describing the value on screen -
-	the catalog step still owns turning ``time`` into a display unit, once any
+	the catalog step still owns turning Durations into a display unit, once any
 	group averaging has run.
 	"""
 	per_unit = (
@@ -634,42 +693,11 @@ def prep_activity(
 			pl.col("position").is_in(positions),
 		)
 		.group_by(granularity, "animal_id", "position")
-		.agg(
-			pl.sum("visits_to_position").alias("visits"),
-			pl.sum("time_in_position").alias("time"),
-		)
+		.agg(pl.sum(source).alias(output) for output, source in columns.items())
 	)
 
 	if agg == "sum":
-		per_unit = per_unit.group_by("animal_id", "position").agg(pl.sum("visits"), pl.sum("time"))
-
-	return per_unit.sort("animal_id", "position").collect(engine="in-memory")
-
-
-def prep_time_alone(
-	context: PlotContext,
-	days_range: tuple[int, int],
-	phase_type: Sequence[str],
-	granularity: Granularity,
-	agg: Aggregation,
-	positions: list[str],
-	hours_range: tuple[int, int] | None = None,
-) -> pl.DataFrame:
-	"""Time each animal spent alone, per position, as a raw Duration column."""
-	per_unit = (
-		context.table("activity_df")
-		.lazy()
-		.filter(
-			pl.col("phase").is_in(list(phase_type)),
-			window_filter(days_range, granularity, hours_range),
-			pl.col("position").is_in(positions),
-		)
-		.group_by(granularity, "animal_id", "position")
-		.agg(pl.sum("time_alone"))
-	)
-
-	if agg == "sum":
-		per_unit = per_unit.group_by("animal_id", "position").agg(pl.sum("time_alone"))
+		per_unit = per_unit.group_by("animal_id", "position").agg(pl.sum(*columns))
 
 	return per_unit.sort("animal_id", "position").collect(engine="in-memory")
 
@@ -960,25 +988,34 @@ def prep_quality_heatmap(context: PlotContext, animals: list[str]) -> tuple[np.n
 	return wide.to_numpy(), antennas
 
 
-def prep_quality_by_antenna(context: PlotContext) -> pl.DataFrame:
-	"""Miss rate per antenna, pooled across the cohort.
+#: The kinds of pass ``recording_quality`` counts, in stacking order.
+READ_KINDS = ("correct", "interpolated", "bad")
 
-	A pooled rate is ``missed.sum() / (missed + detected).sum()``, never the mean of
-	the per-animal cell rates, so a lightly-sampled animal cannot skew an antenna's
-	rate as much as a heavily-sampled one.
+
+def prep_quality_by_antenna(context: PlotContext) -> pl.DataFrame:
+	"""Passes per antenna by kind, pooled across the cohort, each as a share of all passes.
+
+	Pooled shares are ``kind.sum() / passes.sum()``, never the mean of the per-animal
+	cell shares, so a lightly-sampled animal cannot skew an antenna as much as a
+	heavily-sampled one.
+
+	Returns:
+		One row per antenna: the ``READ_KINDS`` counts and a ``<kind>_share`` percentage
+		of each.
 	"""
-	detected, missed = pl.col("detected"), pl.col("missed")
+	passes = pl.sum_horizontal(READ_KINDS)
 
 	return (
 		context.table("recording_quality")
 		.lazy()
 		.group_by("antenna")
-		.agg(detected.sum(), missed.sum())
+		.agg(pl.col(READ_KINDS).sum())
 		.with_columns(
-			pl.when(detected + missed > 0)
-			.then(100 * missed / (detected + missed))
+			pl.when(passes > 0)
+			.then(100 * pl.col(kind) / passes)
 			.otherwise(0.0)
-			.alias("miss_rate")
+			.alias(f"{kind}_share")
+			for kind in READ_KINDS
 		)
 		.sort("antenna")
 		.collect(engine="in-memory")

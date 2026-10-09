@@ -10,6 +10,7 @@ from pathlib import Path
 
 import diskcache
 import polars as pl
+import polars.selectors as cs
 from dash import no_update
 from packaging.version import Version
 
@@ -61,13 +62,17 @@ def resolve_project_path(pid: str) -> str | None:
 		return disk.get(f"path:{pid}")
 
 
+def _manifest(root: Path) -> dict:
+	"""The project's ``project.json``, or an empty dict when it cannot be read."""
+	try:
+		return json.loads((root / Project.MANIFEST).read_text(encoding="utf-8"))
+	except (OSError, ValueError):
+		return {}
+
+
 def project_name(location: str) -> str:
 	"""The name in the project's manifest, or its folder name when that cannot be read."""
-	try:
-		manifest = json.loads((Path(location) / Project.MANIFEST).read_text(encoding="utf-8"))
-	except (OSError, ValueError):
-		manifest = {}
-	return manifest.get("project_name", Path(location).name)
+	return _manifest(Path(location)).get("project_name", Path(location).name)
 
 
 def csv_ready(frame: pl.DataFrame) -> pl.DataFrame:
@@ -76,15 +81,10 @@ def csv_ready(frame: pl.DataFrame) -> pl.DataFrame:
 	CSV has neither type, so a plain ``write_csv`` would otherwise dump raw microsecond
 	integers for a duration and silently drop a category's declared order.
 	"""
-	exprs = []
-	for name, dtype in frame.schema.items():
-		if isinstance(dtype, pl.Duration):
-			exprs.append((pl.col(name).dt.total_microseconds() / 1_000_000).alias(name))
-		elif isinstance(dtype, (pl.Enum, pl.Categorical)):
-			exprs.append(pl.col(name).cast(pl.String))
-		else:
-			exprs.append(pl.col(name))
-	return frame.select(exprs)
+	return frame.with_columns(
+		cs.duration().dt.total_microseconds() / 1_000_000,
+		(cs.enum() | cs.categorical()).cast(pl.String),
+	)
 
 
 def load_project(location: str) -> Project:
@@ -128,10 +128,7 @@ def project_summary(location: str) -> dict:
 	try:
 		project = load_project(location)
 	except Exception as exc:  # any unreadable folder still gets its row, with the reason
-		try:
-			manifest = json.loads((root / Project.MANIFEST).read_text(encoding="utf-8"))
-		except (OSError, ValueError):
-			manifest = {}
+		manifest = _manifest(root)
 		return {
 			**summary,
 			"name": manifest.get("project_name", root.name),
@@ -143,6 +140,7 @@ def project_summary(location: str) -> dict:
 				for name in manifest.get("data_catalog", {})
 			],
 			"delisted": list(manifest.get("delisted", {})),
+			"table_stale": False,
 		}
 
 	return {
@@ -153,7 +151,19 @@ def project_summary(location: str) -> dict:
 		"error": None,
 		"recordings": [_recording_summary(recording, steps) for recording in project.recordings],
 		"delisted": list(project.delisted),
+		"table_stale": table.is_file() and _table_stale(project, table),
 	}
+
+
+def _table_stale(project: Project, table: Path) -> bool:
+	"""Whether the project table misses a listed recording or predates any of its results."""
+	built = table.stat().st_mtime_ns
+	listed = set(pl.scan_parquet(table).select(pl.col("recording").unique()).collect().to_series())
+	return listed != {recording.name for recording in project.recordings} or any(
+		path.stat().st_mtime_ns > built
+		for recording in project.recordings
+		for path in recording.results_path.glob("*.parquet")
+	)
 
 
 def _recording_summary(recording: Recording, steps: int) -> dict:
@@ -235,35 +245,33 @@ def update_notes(location: str, name: str, notes: str, tag: str | None = None) -
 def quality_summary(context: PlotContext) -> dict:
 	"""Pooled detection-quality stats for the header and the quality tab's tiles."""
 	frame = context.table("recording_quality").with_columns(pl.col("animal_id").cast(pl.String))
-	rate = 100 * pl.col("missed") / (pl.col("missed") + pl.col("detected"))
+	counts = pl.col("correct", "interpolated", "bad").sum()
+	missed = pl.col("interpolated") + pl.col("bad")
+	passes = pl.col("correct") + missed
+	rate = pl.when(passes > 0).then(100 * missed / passes).otherwise(0.0).alias("miss")
 
-	overall = frame.select(pl.col("missed").sum(), pl.col("detected").sum()).row(0, named=True)
-	by_antenna = (
-		frame.group_by("antenna")
-		.agg(pl.col("missed").sum(), pl.col("detected").sum())
-		.with_columns(rate.alias("miss_rate"))
-		.sort("miss_rate", descending=True)
-	)
-	by_animal = (
-		frame.group_by("animal_id")
-		.agg(pl.col("missed").sum(), pl.col("detected").sum())
-		.with_columns(rate.alias("miss_rate"))
-		.sort("miss_rate", descending=True)
-	)
-	worst_antenna = by_antenna.row(0, named=True)
-	worst_animal = by_animal.row(0, named=True)
-	missed, detected = overall["missed"], overall["detected"]
+	pooled = frame.select(counts).with_columns(rate).row(0, named=True)
 
 	return {
-		"miss": 100 * missed / (missed + detected) if missed + detected else 0.0,
-		"detected": detected,
-		"missed": missed,
-		"worst_antenna": {"antenna": worst_antenna["antenna"], "miss": worst_antenna["miss_rate"]},
-		"antenna_miss": {
-			str(antenna): miss
-			for antenna, miss in zip(by_antenna["antenna"], by_antenna["miss_rate"], strict=True)
+		**pooled,
+		"antenna_stats": {
+			str(row.pop("antenna")): row
+			for row in frame.group_by("antenna")
+			.agg(counts)
+			.with_columns(rate)
+			.iter_rows(named=True)
 		},
-		"worst_animal": {"animal_id": worst_animal["animal_id"], "miss": worst_animal["miss_rate"]},
+	}
+
+
+def reads_by_animal(context: PlotContext) -> dict[str, dict[str, int]]:
+	"""Each animal's ``correct``, ``interpolated`` and ``bad`` passes over every antenna."""
+	return {
+		row.pop("animal_id"): row
+		for row in context.table("recording_quality")
+		.group_by(pl.col("animal_id").cast(pl.String))
+		.agg(pl.col("correct", "interpolated", "bad").sum())
+		.iter_rows(named=True)
 	}
 
 
@@ -276,6 +284,7 @@ def overview_tiles(context: PlotContext) -> list[dict]:
 	Returns:
 		One ``label`` / ``value`` / ``note`` dict per tile, in reading order.
 	"""
+	assert context.recording is not None
 	days = context.days_range[1] - context.days_range[0] + 1
 	phases = context.phase_range[1] - context.phase_range[0] + 1
 	tiles = [
@@ -286,7 +295,7 @@ def overview_tiles(context: PlotContext) -> list[dict]:
 		}
 	]
 
-	if "main_df" in context and context.recording is not None:
+	if "main_df" in context:
 		# Lazily: this card is built for every recording that is opened, and main_df runs
 		# to hundreds of thousands of rows that nothing here reads except to count them.
 		rows = context.recording.load_results("main_df", eager=False).select(pl.len())
@@ -326,14 +335,16 @@ def overview_tiles(context: PlotContext) -> list[dict]:
 			.sort("pct", descending=True)
 			.row(0, named=True)
 		)
-		layout = context.recording.layout if context.recording else None
-		kinds = {cage.name: cage.cage_type for cage in layout.cages} if layout else {}
-		kind = kinds.get(share["position"])
+		kind = next(
+			cage.cage_type
+			for cage in context.recording.layout.cages
+			if cage.name == share["position"]
+		)
 		tiles.append(
 			{
 				"label": "Busiest cage",
 				"value": share["position"].capitalize().replace("_", " "),
-				"note": f"{share['pct']:.0f}% of cohort time" + (f" · {kind}" if kind else ""),
+				"note": f"{share['pct']:.0f}% of cohort time · {kind}",
 			}
 		)
 
@@ -574,8 +585,9 @@ def _analysed(location: str, name: str) -> bool:
 	return all(recording_status(Path(location) / name).values())
 
 
-# ponytail: local installs only - delete with its _check_update callback and the toast's
-# Cancel listener in clientside.js once the app is deployed and users no longer update it.
+# ponytail: local installs only - delete with its _check_update and _update callbacks,
+# updater.py and the toast's listener in clientside.js once the app is deployed and users
+# no longer update it.
 @cache
 def newer_release() -> str | None:
 	"""The latest stable PyPI release if it is newer than the installed one, else None.

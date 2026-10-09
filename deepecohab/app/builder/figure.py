@@ -8,7 +8,16 @@ import plotly.graph_objects as go
 import polars as pl
 import polars.selectors as cs
 
-from deepecohab.app.builder.catalog import EXPOSURE, METRIC, VALUE, Field, Kind, metric_names
+from deepecohab.app.builder.catalog import (
+	AGE,
+	AGE_UNITS,
+	EXPOSURE,
+	METRIC,
+	VALUE,
+	Field,
+	Kind,
+	metric_names,
+)
 from deepecohab.plotting import theme
 
 #: Builder figures render with this template initially; the app callback overrides it
@@ -57,12 +66,32 @@ HOVER_LIST_MAX = 3
 #: gets one point per animal instead of one per hour.
 DETAIL = "detail"
 
+#: Not a plotly argument either: a box or violin trace takes one marker colour, so the
+#: points of this field are redrawn as extra point-only traces, one per colour.
+POINT_COLOR = "point_color"
+
+#: Plot types whose traces draw their own points, so Point colour has something to colour.
+POINTED: frozenset[str] = frozenset({"box", "violin"})
+
+#: How far past its box's quartiles a point may sit, in interquartile ranges, before
+#: excluding outliers drops it: Tukey's fences, where plotly stops a box's whiskers.
+FENCE = 1.5
+
+#: How many steps a measure on Point colour is cut into along the colour scale.
+POINT_BANDS = 10
+
+#: The column that ties each drawn point back to its row of the aggregated frame.
+ROW = "__row"
+
+#: Points whose Point colour measure is empty, in the muted grey the placeholder text uses.
+MISSING = "rgb(127, 140, 165)"
+
 #: Plot types that draw a spread rather than a point, so they are meaningless until
 #: something on Detail says what one observation is.
 DISTRIBUTIONS: frozenset[str] = frozenset({"box", "violin", "strip", "histogram", "ecdf"})
 
-#: Plot types that count rows into bins rather than drawing them.
-BINNED: frozenset[str] = frozenset({"histogram", "density_heatmap"})
+#: Plot types plotly draws as histograms, pooling rows per bin rather than drawing them.
+BINNED: frozenset[str] = frozenset({"histogram", "heatmap"})
 
 #: The finest identity a project table holds: one animal within one recording. Tags are
 #: reused between recordings, so animal_id on its own would merge different animals.
@@ -109,30 +138,9 @@ LABELS: dict[str, str] = {
 	"animation_frame": "Animate",
 	"text": "Label",
 	HOVER: "Hover",
+	POINT_COLOR: "Point colour",
 	DETAIL: "Detail",
 }
-
-#: What Format can override, each bound to the element whose automatic title it was set
-#: on. An override lapses once that title changes - another field or measure landed
-#: there - so a renamed axis never ends up labelling a different quantity.
-FORMAT_BINDS: dict[str, str] = {
-	"title": "title",
-	"xaxis": "xaxis",
-	"xmin": "xaxis",
-	"xmax": "xaxis",
-	"yaxis": "yaxis",
-	"ymin": "yaxis",
-	"ymax": "yaxis",
-	"colorbar": "colorbar",
-	"cmin": "colorbar",
-	"cmax": "colorbar",
-	"colorscale": "coloraxis",
-	"palette": "colorway",
-}
-
-#: Format's numeric bounds, each upper one paired with the lower it must stay above.
-FORMAT_PAIRS: dict[str, str] = {"xmax": "xmin", "ymax": "ymin", "cmax": "cmin"}
-FORMAT_BOUNDS: frozenset[str] = frozenset(FORMAT_PAIRS) | frozenset(FORMAT_PAIRS.values())
 
 
 @dataclass(frozen=True)
@@ -159,7 +167,8 @@ class PlotType:
 		accepted = inspect.signature(self.builder).parameters
 		# A bin pools many rows, which leaves a hover field nothing to attach to.
 		skipped = HOVER if self.name in BINNED else None
-		return (*(c for c in CHANNELS if c in accepted and c != skipped), DETAIL)
+		pointed = (POINT_COLOR,) if self.name in POINTED else ()
+		return (*(c for c in CHANNELS if c in accepted and c != skipped), *pointed, DETAIL)
 
 
 PLOTS: tuple[PlotType, ...] = (
@@ -172,7 +181,9 @@ PLOTS: tuple[PlotType, ...] = (
 	PlotType("strip", "Strip", px.strip, ("y",)),
 	PlotType("histogram", "Histogram", px.histogram, ("x",)),
 	PlotType("ecdf", "ECDF", px.ecdf, ("x",)),
-	PlotType("density_heatmap", "Density heatmap", px.density_heatmap, ("x", "y")),
+	# One cell per X and Y value (see build_figure), so avg only pools the Detail groups a
+	# cell holds; plotly's default sum would add their rates up.
+	PlotType("heatmap", "Heatmap", px.density_heatmap, ("x", "y", "z"), {"histfunc": "avg"}),
 	PlotType("scatter_polar", "Polar scatter", px.scatter_polar, ("r", "theta")),
 	PlotType("line_polar", "Polar line", px.line_polar, ("r", "theta"), {"line_close": True}),
 	PlotType("bar_polar", "Polar bar", px.bar_polar, ("r", "theta")),
@@ -395,6 +406,16 @@ def label_bins(data: pl.DataFrame, bins: dict[str, Bins], catalog: Sequence[Fiel
 	return data.with_columns(spans)
 
 
+def _collapse(mode: str, metric: str | None = None) -> pl.Expr:
+	"""Value collapsed the way ``mode`` names, from ``metric``'s rows only when given."""
+	value, exposure = pl.col(VALUE), pl.col(EXPOSURE)
+	if metric is not None:
+		value, exposure = (column.filter(pl.col(METRIC) == metric) for column in (value, exposure))
+
+	rate = pl.when(exposure.sum() > 0).then(value.sum() / exposure.sum())
+	return {"total": value.sum(), "exposure": exposure.sum(), "mean": value.mean()}.get(mode, rate)
+
+
 def build_frame(
 	frame: pl.LazyFrame,
 	state: dict[str, Any],
@@ -413,17 +434,30 @@ def build_frame(
 	:func:`parse_bins` reads there rather than one group per value, so the field reads
 	as ``day 1-3``, ``day 4-6`` - which is what a facet needs to compare one stretch of
 	a recording to another. A block spec that cannot be read is ignored here and
-	reported by :func:`warnings_for`.
+	reported by :func:`warnings_for`. Grouped Age is first rounded to whole
+	``state["age_unit"]``, after filtering, since its filter range is in days; blocks
+	then count in that unit.
 
 	Returns:
 		The aggregated frame, with one column per field on a shelf.
 	"""
-	frame = apply_filters(frame, state.get("filters", {}))
 	keys = group_keys(state, catalog)
 	wanted = measures(state, catalog)
+	singles = [item for item in wanted if item.metric is not None]
+	filters = state.get("filters", {})
+	if singles:
+		# A single-metric chip names its own metric, so a Metric filter could only empty it.
+		filters = {column: chosen for column, chosen in filters.items() if column != METRIC}
+	frame = apply_filters(frame, filters)
 	mode = state.get("measure_as", DEFAULT_MODE)
 	hovered = hover_listed(state, catalog)
 	carried: set[str] = set()
+
+	per_unit = AGE_UNITS.get(state.get("age_unit", "days"), 1)
+	if AGE in keys and per_unit != 1:
+		frame = frame.with_columns(
+			(pl.col(AGE) / per_unit).round(mode="half_away_from_zero").cast(pl.Int64)
+		)
 
 	if mode == "mean":
 		# An hour's value is split over the positions it happened in; put it back
@@ -460,31 +494,16 @@ def build_frame(
 	if not wanted:
 		return collected(frame.group_by(keys).agg(pl.len().alias("rows"), *listed))
 
-	value = next((item for item in wanted if item.agg == "metric"), None)
+	value = next((item for item in wanted if item.agg == "metric" and item.metric is None), None)
 	plain = [pl.mean(item.name) for item in wanted if item.agg != "metric"] + listed
+	plain += [_collapse(mode, item.metric).alias(item.name) for item in singles]
 
 	if value is None:
 		return collected(frame.group_by(keys).agg(plain) if keys else frame.select(plain))
 
 	agg_keys = keys if METRIC in keys else [*keys, METRIC]
 
-	match mode:
-		case "total":
-			grouped = frame.group_by(agg_keys).agg(*plain, pl.sum(VALUE).alias(value.name))
-		case "exposure":
-			grouped = frame.group_by(agg_keys).agg(*plain, pl.sum(EXPOSURE).alias(value.name))
-		case "mean":
-			grouped = frame.group_by(agg_keys).agg(*plain, pl.mean(VALUE).alias(value.name))
-		case _:  # "rate"
-			summed = frame.group_by(agg_keys).agg(
-				*plain, pl.sum(VALUE).alias("_v"), pl.sum(EXPOSURE).alias("_e")
-			)
-			grouped = summed.with_columns(
-				pl.when(pl.col("_e") > 0)
-				.then(pl.col("_v") / pl.col("_e"))
-				.otherwise(None)
-				.alias(value.name)
-			).drop("_v", "_e")
+	grouped = frame.group_by(agg_keys).agg(*plain, _collapse(mode).alias(value.name))
 
 	if METRIC not in keys:
 		grouped = grouped.drop(METRIC)
@@ -537,11 +556,34 @@ def warnings_for(
 	if missing:
 		notes.append(Note(f"Drop a field on {', '.join(missing)} to draw the plot.", blocking=True))
 
-	uses_value = any(item.agg == "metric" for item in measures(state, catalog))
+	wanted = measures(state, catalog)
+	pooled = any(item.agg == "metric" and item.metric is None for item in wanted)
+	singles = [item.label for item in wanted if item.metric is not None]
 	picked = state.get("filters", {}).get(METRIC) or metric_names(frame)
 	faceted = any(METRIC in state["channels"].get(channel, []) for channel in FACETS)
 
-	if uses_value and len(picked) > 1 and not faceted:
+	if singles and (pooled or METRIC in group_keys(state, catalog)):
+		notes.append(
+			Note(
+				f"{', '.join(singles).capitalize()} each read one metric, so they cannot share the "
+				"plot with Value or Metric, which range over all of them. Take Value and Metric "
+				"off the shelves.",
+				blocking=True,
+			)
+		)
+
+	axes = {name for axis in ("x", "y") for name in state["channels"].get(axis, [])}
+	if state["kind"] == "heatmap" and any(item.name in axes for item in wanted):
+		notes.append(
+			Note(
+				"A heatmap draws one cell per X and Y value, so X and Y take categories or "
+				"ordered fields and the measure goes on Z. Two measures against each other "
+				"are a scatter.",
+				blocking=True,
+			)
+		)
+
+	if pooled and len(picked) > 1 and not faceted:
 		units = "; ".join(
 			f"{name} ({METRIC_UNITS[name]})" if name in METRIC_UNITS else name for name in picked
 		)
@@ -577,7 +619,7 @@ def warnings_for(
 			)
 		)
 
-	if state.get("measure_as") == "mean" and uses_value:
+	if state.get("measure_as") == "mean" and any(item.agg == "metric" for item in wanted):
 		notes.append(
 			Note(
 				"An hourly mean weights every hour equally, however much of it was observed; "
@@ -657,29 +699,61 @@ def build_figure(
 	if data.is_empty():
 		return placeholder("No rows match the current filters."), [note.text for note in notes]
 
+	if plot.name in POINTED and state.get("outliers") == "exclude":
+		total = data.height
+		data = drop_outliers(data, state, catalog)
+		if dropped := total - data.height:
+			notes.append(
+				Note(
+					f"Excluded {dropped} of {total} points lying more than {FENCE:g} IQR outside "
+					f"their {plot.label.lower()}'s quartiles."
+				)
+			)
+
 	mode = state.get("measure_as", DEFAULT_MODE)
 	labels = {item.name: label_for(item, mode) for item in catalog}
 	kwargs: dict[str, Any] = {
 		channel: list(names) if channel in MULTI else names[0]
 		for channel, names in assigned(state).items()
-		if channel != DETAIL
+		if channel not in (DETAIL, POINT_COLOR)
 	}
+	numeric = {item.name for item in measures(state, catalog)}
 	if HOVER in kwargs:
-		numeric = {item.name for item in measures(state, catalog)}
 		kwargs[HOVER] = {name: ":.4~r" if name in numeric else True for name in kwargs[HOVER]}
+
+	fields = {item.name: item for item in catalog}
+	point_field = next(iter(state["channels"].get(POINT_COLOR, [])), None)
+	point_item = (
+		fields.get(point_field) if plot.name in POINTED and point_field in data.columns else None
+	)
+	point_values: list = []
+	if point_item is not None:
+		# ROW leads the hover data, so it is customdata[0] on every trace plotly draws.
+		data = data.with_row_index(ROW)
+		hover = ":.4~r" if point_item.name in numeric else True
+		kwargs[HOVER] = {ROW: False, **kwargs.get(HOVER, {}), point_item.name: hover}
+		if point_item.kind != "measure":
+			point_values = data[point_item.name].unique().sort(nulls_last=True).to_list()
 
 	# Builder colours come from sample_palette(n) for the categories actually on the
 	# Colour shelf, not the colorway's first n: plotly express walks the colorway in
-	# order, so two categories would get neighbouring, hard-to-tell-apart samples.
+	# order, so two categories would get neighbouring, hard-to-tell-apart samples. Point
+	# categories take the samples after the boxes', so no box shares a colour with a point.
 	color_field = kwargs.get("color")
-	color_item = next((item for item in catalog if item.name == color_field), None)
-	if isinstance(color_field, str) and color_item is not None and color_item.kind == "dimension":
-		n = data.select(pl.col(color_field).n_unique()).item()
-		# Format's palette is drawn here, while plotly express still hands out the colours;
-		# one too short to give every category its own is skipped, as the form says.
-		picked = theme.PALETTES.get(state.get("format", {}).get("palette", {}).get("value"))
-		fits = picked is not None and len(picked) >= n
-		kwargs["color_discrete_sequence"] = picked[:n] if fits else theme.sample_palette(n)
+	color_item = fields.get(color_field) if isinstance(color_field, str) else None
+	boxes = 0
+	if color_item is not None and color_item.kind == "dimension":
+		boxes = data.select(pl.col(color_item.name).n_unique()).item()
+	elif color_field is None and point_values:
+		boxes = 1
+	colorway = theme.sample_palette(boxes + len(point_values)) or None
+	if boxes and colorway:
+		kwargs["color_discrete_sequence"] = colorway[:boxes]
+
+	if plot.name == "heatmap":
+		# As categories, plotly cannot bin neighbouring hours or days into one cell. They
+		# keep build_frame's sorted order, which only slips for a value its first group lacks.
+		data = data.with_columns(pl.col(*{kwargs["x"], kwargs["y"]}).cast(pl.String))
 
 	try:
 		figure = plot.builder(data, **kwargs, **plot.extra, labels=labels, template=TEMPLATE)
@@ -690,115 +764,185 @@ def build_figure(
 	figure.update_layout(
 		margin={"l": 60, "r": 20, "t": 40, "b": 40},
 		legend={"title": None},
-		colorway=kwargs.get("color_discrete_sequence"),
+		colorway=colorway,
 	)
 	figure.for_each_annotation(lambda note: note.update(text=note.text.split("=")[-1]))
+
+	if point_item is not None:
+		colors = dict(zip(point_values, (colorway or [])[boxes:], strict=True)) or None
+		color_points(figure, data, point_item.name, labels[point_item.name], colors)
 
 	return figure, [note.text for note in notes]
 
 
-def auto_titles(figure: go.Figure) -> dict[str, str | None]:
-	"""The titles plotly express gave each element Format can change.
+def drop_outliers(
+	data: pl.DataFrame, state: dict[str, Any], catalog: Sequence[Field]
+) -> pl.DataFrame:
+	"""Drop the rows whose measure sits past the :data:`FENCE` of its own box or violin.
+
+	Each box is one combination of the categories on the shelves that split boxes, so
+	Detail, Hover and Point colour, which only say what a point is, are left out. The
+	fences are computed once: recomputing them on what is left would find new outliers
+	on every pass.
+	"""
+	fields = {item.name: item for item in catalog}
+	shelved = {
+		channel: [fields[name] for name in names if name in fields]
+		for channel, names in assigned(state).items()
+	}
+	value = next(
+		(item.name for axis in ("y", "x") for item in shelved.get(axis, []) if not item.discrete),
+		None,
+	)
+	if value is None:
+		return data
+
+	keys = [
+		item.name
+		for channel, items in shelved.items()
+		if channel not in (DETAIL, HOVER, POINT_COLOR)
+		for item in items
+		if item.discrete
+	]
+	column = pl.col(value)
+	# Linear quartiles, the method plotly draws a box's own quartiles with.
+	q1, q3 = column.quantile(0.25, "linear"), column.quantile(0.75, "linear")
+	fence = FENCE * (q3 - q1)
+	outside = ~column.is_between(q1 - fence, q3 + fence)
+
+	return data.remove(outside.over(list(dict.fromkeys(keys))) if keys else outside)
+
+
+def color_points(
+	figure: go.Figure,
+	data: pl.DataFrame,
+	name: str,
+	label: str,
+	colors: dict[Any, str] | None,
+) -> None:
+	"""Recolour every box's or violin's points by ``data[name]``, rows found through ``ROW``.
+
+	A box or violin trace takes one marker colour, so each keeps its shape with its own
+	points switched off and gets one point-only copy per colour drawn over it. A copy
+	shares its box's offset group, so it lands in the same slot, and plotly jitters its
+	points the way it would have the box's own.
 
 	Args:
-		figure: a figure straight out of ``build_figure``.
-
-	Returns:
-		Title text per element: ``""`` when the element is drawn untitled, ``None``
-		when the figure has no such element (no cartesian axes, no colour bar). The
-		colour axis and colorway carry no text, so they are ``""`` whenever present.
+		colors: category to colour, listed on the legend; ``None`` cuts a measure into
+			:data:`POINT_BANDS` steps of the house scale, read off a colorbar instead.
 	"""
-	cartesian = any(getattr(trace, "xaxis", None) for trace in figure.data)
-	colorbar = figure.layout.coloraxis.colorbar.title.text
+	styles: dict[Any, tuple[str, str, float | None]]
+	if colors is None:
+		column = pl.col(name)
+		scaled = ((column - column.min()) / (column.max() - column.min())).fill_nan(0.0)
+		keys = data.select((scaled * POINT_BANDS).floor().clip(0, POINT_BANDS - 1)).to_series()
+		shades = [(step + 0.5) / POINT_BANDS for step in range(POINT_BANDS)]
+		samples = px.colors.sample_colorscale(theme.AURORA, shades)
+		styles = {
+			step: ("", color, t)
+			for step, (t, color) in enumerate(zip(shades, samples, strict=True))
+		}
+		styles[None] = ("no value", MISSING, None)
+		low, high = data[name].min(), data[name].max()
+	else:
+		keys = data[name]
+		styles = {key: (str(key), color, None) for key, color in colors.items()}
+	keys = keys.to_list()
 
-	def axis_title(axes: Iterable[Any]) -> str | None:
-		return (
-			next((axis.title.text for axis in axes if axis.title.text), "") if cartesian else None
-		)
+	boxed_legend = any(trace.showlegend is not False for trace in figure.data)
+	listed: set = set()
+	for index, trace in enumerate(list(figure.data)):
+		if not isinstance(trace, go.Box | go.Violin):
+			continue
+		points = "boxpoints" if isinstance(trace, go.Box) else "points"
+		# Unset offset groups each take their own slot, so give each a name to share.
+		trace.offsetgroup = trace.offsetgroup or f"{POINT_COLOR}{index}"
+		rows = [keys[row] for row in trace.customdata[:, 0].astype(int)]
 
-	return {
-		"title": figure.layout.title.text or "",
-		"xaxis": axis_title(figure.select_xaxes()),
-		"yaxis": axis_title(figure.select_yaxes()),
-		"colorbar": colorbar or None,
-		"coloraxis": None if colorbar is None else "",
-		"colorway": "" if figure.layout.colorway else None,
-	}
+		for key, (title, color, shade) in styles.items():
+			pick = [i for i, value in enumerate(rows) if value == key]
+			if not pick:
+				continue
+			copy = type(trace)(trace)
+			copy.update(
+				x=None if trace.x is None else [trace.x[i] for i in pick],
+				y=None if trace.y is None else [trace.y[i] for i in pick],
+				customdata=trace.customdata[pick],
+				name=title,
+				legendgroup=f"{POINT_COLOR}:{title}",
+				showlegend=False,
+				marker_color=color,
+				fillcolor="rgba(0,0,0,0)",
+				line_width=0,
+				hoveron="points",
+				# Lets Format resample the colour when it swaps the colour scale.
+				meta={"dehScale": shade} if shade is not None else None,
+				**{points: "all"},
+			)
+			if isinstance(copy, go.Violin):
+				copy.update(meanline_visible=False, box_visible=False)
+			figure.add_trace(copy)
+			listed.add(key)
+		if isinstance(trace, go.Box):
+			# Hidden, not switched off: a box without points whiskers to its min and max
+			# rather than to the 1.5 IQR fences.
+			trace.update(marker_opacity=0, hoveron="boxes")
+		else:
+			trace.update(points=False)
 
-
-def live_format(fmt: dict[str, Any], auto: dict[str, str | None]) -> dict[str, Any]:
-	"""The overrides in ``fmt`` whose element still carries the title they were set on."""
-	return {
-		key: entry["value"] for key, entry in fmt.items() if entry["on"] == auto[FORMAT_BINDS[key]]
-	}
-
-
-def inverted(low: float | None, high: float | None) -> bool:
-	"""Whether a pair of Format bounds crosses, which draws nothing but the form's error."""
-	return low is not None and high is not None and low >= high
-
-
-def apply_format(figure: go.Figure, fmt: dict[str, Any]) -> dict[str, str | None]:
-	"""Draw the Format overrides that still hold onto ``figure``.
-
-	Args:
-		figure: a figure straight out of ``build_figure``.
-		fmt: ``state["format"]``, key -> ``{"on": title it was set on, "value": ...}``.
-
-	Returns:
-		The automatic titles, as ``auto_titles`` read them before any override.
-	"""
-	auto = auto_titles(figure)
-	live = live_format(fmt, auto)
-
-	if "title" in live:
-		figure.update_layout(title_text=live["title"])
-	for letter, axes in (("x", figure.select_xaxes), ("y", figure.select_yaxes)):
-		every = list(axes())
-		if f"{letter}axis" in live:
-			# Facets title only their outer axes; an untitled axis gets it on the first.
-			for axis in [axis for axis in every if axis.title.text] or every[:1]:
-				axis.title.text = live[f"{letter}axis"]
-		low, high = live.get(f"{letter}min"), live.get(f"{letter}max")
-		if (low is not None or high is not None) and not inverted(low, high):
-			# minallowed/maxallowed hold one bound while the data still sets the other; a
-			# figure that drew its own range hands it back to autorange for them to count.
-			for axis in every:
-				axis.update(
-					autorange=True,
-					range=None,
-					autorangeoptions={"minallowed": low, "maxallowed": high},
+	if colors is not None:
+		# An invisible box draws an empty legend icon, so each colour is listed by an empty
+		# dot trace instead; sharing the legend group, a click on it hides every box's copy.
+		# Below the boxes' own entries in the one legend, two legends could only overlap.
+		for first, key in enumerate(key for key in styles if key in listed):
+			title, color, _ = styles[key]
+			figure.add_trace(
+				go.Scatter(
+					x=[None],
+					y=[None],
+					mode="markers",
+					marker_color=color,
+					name=title,
+					legendgroup=f"{POINT_COLOR}:{title}",
+					legendgrouptitle_text=None if first else label,
+					hoverinfo="skip",
 				)
-	if "colorbar" in live:
-		figure.update_layout(coloraxis_colorbar_title_text=live["colorbar"])
-	if scale := theme.COLORSCALES.get(live.get("colorscale")):
-		figure.update_layout(coloraxis_colorscale=scale)
+			)
+		return
 
-	cmin, cmax = live.get("cmin"), live.get("cmax")
-	if (cmin is not None or cmax is not None) and not inverted(cmin, cmax):
-		# With cauto off plotly fills a missing bound from the data; on, it ignores both.
-		figure.update_layout(coloraxis={"cauto": False, "cmin": cmin, "cmax": cmax})
+	# The colour bar shares the right margin with the boxes' legend, so it starts a quarter
+	# down, leaving the legend room for about six entries above it.
+	placed = {"len": 0.6, "y": 0.75, "yanchor": "top"} if boxed_legend else {}
+	figure.update_layout(
+		coloraxis={
+			"colorscale": theme.AURORA,
+			"cmin": low,
+			"cmax": high,
+			"colorbar": {"title": {"text": label}, **placed},
+		}
+	)
+	# Box and violin markers cannot ride a colour axis, so this empty trace draws its bar.
+	figure.add_trace(
+		go.Scatter(
+			x=[None],
+			y=[None],
+			mode="markers",
+			marker={"color": [low, high], "coloraxis": "coloraxis"},
+			showlegend=False,
+			hoverinfo="skip",
+		)
+	)
 
-	return auto
 
-
-def prune(state: dict[str, Any], keep: Iterable[str]) -> tuple[dict[str, Any], list[str]]:
+def prune(state: dict[str, Any], keep: Iterable[str]) -> dict[str, Any]:
 	"""Drop assignments the new plot type has no shelf for.
 
 	Args:
 		keep: the channels the new plot type supports.
-
-	Returns:
-		The state and the labels of the channels that were cleared.
 	"""
 	supported = set(keep)
-	dropped = [
-		LABELS.get(channel, channel)
-		for channel, names in state["channels"].items()
-		if names and channel not in supported
-	]
 	state["channels"] = {
 		channel: names for channel, names in state["channels"].items() if channel in supported
 	}
 
-	return state, dropped
+	return state

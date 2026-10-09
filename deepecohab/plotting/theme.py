@@ -48,8 +48,9 @@ AURORA: list[list] = [
 _COLORSCALE = {"sequential": AURORA, "sequentialminus": "Plasma", "diverging": "curl"}
 
 COLORBAR: dict = {
-	"thicknessmode": "fraction",
-	"thickness": 0.03,
+	# Pixels, like the fonts: a fraction of the plot width swells the bar under browser zoom.
+	"thicknessmode": "pixels",
+	"thickness": 12,
 	"lenmode": "fraction",
 	"len": 1,
 	"y": 1,
@@ -139,6 +140,14 @@ CAGE_LOOKS: dict[str, list[tuple[str, str]]] = {
 	],
 }
 
+#: The reads stack's colour per pass kind, matching the dark-theme antenna rings on the habitat
+#: map (--accent / --warn / --bad); mid-luminance, so shared by both themes.
+READ_LOOKS: dict[str, str] = {
+	"correct": "#45b5c8",
+	"interpolated": "#e6b04a",
+	"bad": "#f07a82",
+}
+
 #: Trace defaults every theme shares: a bare line is a smooth curve with no markers.
 _DATA = {"scatter": [{"mode": "lines", "line": {"shape": "spline"}}]}
 
@@ -150,6 +159,7 @@ def _template(tokens: dict[str, str]) -> go.layout.Template:
 		"linecolor": tokens["axis"],
 		"zerolinecolor": tokens["axis"],
 		"tickcolor": tokens["axis"],
+		"spikecolor": tokens["ink2"],
 		"tickfont": {"color": tokens["ink2"]},
 		"title": {"font": {"color": tokens["ink2"]}},
 	}
@@ -184,8 +194,8 @@ def _template(tokens: dict[str, str]) -> go.layout.Template:
 	)
 
 
-DARK_THEME = _template(_TOKENS["dark"])
-LIGHT_THEME = _template(_TOKENS["light"])
+pio.templates["dark"] = _template(_TOKENS["dark"])
+pio.templates["light"] = _template(_TOKENS["light"])
 
 _PUBLICATION_AXIS = {
 	"showgrid": False,
@@ -198,7 +208,7 @@ _PUBLICATION_AXIS = {
 	"title": {"font": {"color": "#000000"}},
 }
 
-PUBLICATION_THEME = go.layout.Template(
+pio.templates["publication"] = go.layout.Template(
 	data=_DATA,
 	layout=go.Layout(
 		paper_bgcolor="#ffffff",
@@ -213,12 +223,7 @@ PUBLICATION_THEME = go.layout.Template(
 		colorscale=_COLORSCALE,
 		coloraxis={
 			"colorbar": {
-				"thicknessmode": "fraction",
-				"thickness": 0.025,
-				"lenmode": "fraction",
-				"len": 1,
-				"y": 1,
-				"yanchor": "top",
+				**COLORBAR,
 				"title": {"side": "right", "font": {"color": "black"}},
 			}
 		},
@@ -240,8 +245,3 @@ def apply(figure: go.Figure, name: str) -> go.Figure:
 		figure.update_shapes(fillcolor=color, selector={"name": f"phase-band-{phase}"})
 
 	return figure
-
-
-pio.templates["dark"] = DARK_THEME
-pio.templates["light"] = LIGHT_THEME
-pio.templates["publication"] = PUBLICATION_THEME

@@ -12,8 +12,15 @@ from plotly.subplots import make_subplots
 from deepecohab.core.data_model import Layout
 from deepecohab.plotting.animals import ColorMapping, collapse_legend
 from deepecohab.plotting.export import LEGEND_ITEM_PX, text_px
-from deepecohab.plotting.prepare import Heatmap
-from deepecohab.plotting.theme import AURORA, COLORBAR, FONT_SIZE, PHASE_BAND, sample_palette
+from deepecohab.plotting.prepare import READ_KINDS, Heatmap
+from deepecohab.plotting.theme import (
+	AURORA,
+	COLORBAR,
+	FONT_SIZE,
+	PHASE_BAND,
+	READ_LOOKS,
+	sample_palette,
+)
 
 
 def plot_animal_speed(
@@ -223,6 +230,19 @@ def _event_spans(
 			figure.add_shape(name="event-label", **box, line_width=0, layer="above", label=label)
 
 
+#: Most panels a faceted heatmap puts in one column (stacked) or one row (grid).
+FACETS_PER_LINE = 4
+
+
+def _crosshair(figure: go.Figure) -> go.Figure:
+	"""Trace the hovered cell's row and column across the plot."""
+	spikes = {"showspikes": True, "spikemode": "across", "spikethickness": 1, "spikedash": "solid"}
+	figure.update_xaxes(**spikes)
+	figure.update_yaxes(**spikes)
+
+	return figure
+
+
 def _faceted_heatmap(
 	heatmap: Heatmap,
 	title: str,
@@ -239,14 +259,16 @@ def _faceted_heatmap(
 	an hour against animals, so lining their columns up matters. ``grid`` instead lays the
 	panels out in a row, for panels - like a pairwise matrix - with no axis to share across
 	facets; a row of four cages fits a full-width card without the dead space a square
-	panel leaves when its card is taller than it is wide. Every facet has the same labels,
-	so only the outer panels carry tick labels.
+	panel leaves when its card is taller than it is wide. Either way a line holds at most
+	:data:`FACETS_PER_LINE` panels and a larger habitat wraps into more columns (stacked)
+	or rows (grid). Every facet has the same labels, so only the outer panels carry tick
+	labels.
 
 	A single shared colour axis keeps the panels comparable, which is also why these
 	figures offer one scope - cages or tunnels - at a time (§ Cage / tunnel scope).
 	"""
 	n = len(heatmap.facets)
-	cols = n if grid else 1
+	cols = min(n, FACETS_PER_LINE) if grid else math.ceil(n / FACETS_PER_LINE)
 	rows = math.ceil(n / cols)
 	figure = make_subplots(
 		rows=rows,
@@ -292,7 +314,8 @@ def _faceted_heatmap(
 
 	figure.update_xaxes(automargin=True)
 	figure.update_xaxes(title_text=x_title, row=rows, col=1)
-	figure.update_yaxes(title_text=y_title, automargin=True)
+	figure.update_yaxes(automargin=True)
+	figure.update_yaxes(title_text=y_title, col=1)
 	figure.update_layout(
 		title=title,
 		coloraxis={
@@ -317,12 +340,8 @@ def _faceted_heatmap(
 		# and toward the colour bar rather than leaving a gap before it.
 		figure.update_xaxes(constrain="domain", constraintoward="right")
 		figure.update_yaxes(constrain="domain", constraintoward="top")
-		# The shrink leaves the bottom of the plotting area to the tick labels of the panel
-		# the shared bar is pushed up against, so it stops short of them rather than running
-		# the full height the theme's bar would (§ COLORBAR).
-		figure.update_coloraxes(colorbar={"thickness": 0.009})
 
-	return figure
+	return _crosshair(figure)
 
 
 def _position_plot(
@@ -372,6 +391,9 @@ def _position_plot(
 			)
 			figure.update_traces(boxmean=True)
 
+	# px pins each trace to an offsetgroup, which reserves a slot even when legend-hidden;
+	# without one, plotly groups only the visible traces.
+	figure.update_traces(offsetgroup="", alignmentgroup="")
 	collapse_legend(figure, mapping)
 	figure.update_xaxes(
 		title_text=x_title,
@@ -379,7 +401,7 @@ def _position_plot(
 		ticktext=_tick_labels(positions),
 	)
 	figure.update_yaxes(title_text=y_title)
-	figure.update_layout(barcornerradius=10, legend_title_text=mapping.legend_title)
+	figure.update_layout(barcornerradius=6, legend_title_text=mapping.legend_title)
 
 	return figure
 
@@ -589,6 +611,8 @@ def plot_sum_line(
 		color_discrete_map=mapping.trace_colors,
 		category_orders={mapping.trace_column: mapping.order},
 		title=title,
+		# px switches to WebGL past 1000 rows, which has no spline.
+		render_mode="svg",
 	)
 
 	collapse_legend(figure, mapping)
@@ -669,9 +693,12 @@ def plot_mean_line(
 def plot_ranking_line(frame: pl.DataFrame, mapping: ColorMapping, spans: pl.DataFrame) -> go.Figure:
 	"""Plots line graph of ranking over time."""
 	figure = px.line(
-		frame,
+		# Wall-clock, as the event spans are; not epoch numbers, which plotly would read in
+		# the browser's zone.
+		frame.with_columns(pl.col("datetime").dt.replace_time_zone(None)),
 		x="datetime",
 		y="ordinal",
+		line_shape="hv",
 		color=mapping.trace_column,
 		color_discrete_map=mapping.trace_colors,
 		category_orders={mapping.trace_column: mapping.order},
@@ -681,7 +708,7 @@ def plot_ranking_line(frame: pl.DataFrame, mapping: ColorMapping, spans: pl.Data
 	figure.update_layout(
 		title="<b>Social dominance ranking in time</b>",
 		legend={"title": mapping.legend_title, "tracegroupgap": 0},
-		xaxis={"title": "<b>Timeline</b>"},
+		xaxis={"title": "<b>Timeline</b>", "type": "date"},
 		yaxis={"title": "<b>Ranking</b>"},
 	)
 	_event_spans(figure, spans)
@@ -757,7 +784,6 @@ def plot_ranking_stability(
 		)
 
 	collapse_legend(figure, mapping)
-	_pin_bin_axis(figure, frame[granularity])
 	_event_spans(figure, spans)
 
 	return figure
@@ -808,13 +834,15 @@ def plot_heatmap(
 	)
 
 	column, row, value = hover
-	figure.update_traces(hovertemplate=f"{column}: %{{x}}<br>{row}: %{{y}}<br>{value}: %{{z}}")
+	figure.update_traces(
+		hovertemplate=f"{column}: %{{x}}<br>{row}: %{{y}}<br>{value}: %{{z}}<extra></extra>"
+	)
 	# Square cells leave spare width; it goes left of the matrix, not between it and the colour bar.
 	figure.update_layout(
 		yaxis={"automargin": True}, xaxis={"automargin": True, "constraintoward": "right"}
 	)
 
-	return figure
+	return _crosshair(figure)
 
 
 def plot_sociability_heatmap(
@@ -922,7 +950,6 @@ def plot_metrics_polar(frame: pl.DataFrame, mapping: ColorMapping) -> go.Figure:
 def _edge_traces(
 	graph: nx.Graph,
 	pos: dict[str, np.ndarray],
-	cmap: str = "Viridis",
 	edge_weight: Literal["chasings", "proportion_together"] = "chasings",
 ) -> list[go.Scatter]:
 	"""One trace per edge, its width and colour scaled by the edge's weight.
@@ -931,10 +958,12 @@ def _edge_traces(
 	cohort's own range; a cohort whose edges all carry the same weight has no spread
 	to scale by, and takes the middle of the colorscale throughout.
 
+	The arrowheads ride the figure's colour axis, so Format can swap its scale; a line
+	cannot, so its colour is sampled here and resampled by the clientside Format.
+
 	Args:
 		graph: the network, whose edges carry ``edge_weight`` as an attribute.
 		pos: node positions, as ``(x, y, ranking)`` per node.
-		cmap: any named plotly colorscale.
 		edge_weight: which edge attribute drives width and colour.
 
 	Returns:
@@ -951,7 +980,7 @@ def _edge_traces(
 		z_scores = (edge_widths - mu) / std
 		normalized_for_colors = 1 / (1 + np.exp(-z_scores))
 
-	colorscale: list[str] = px.colors.sample_colorscale(cmap, normalized_for_colors.tolist())
+	colorscale: list[str] = px.colors.sample_colorscale(AURORA, normalized_for_colors.tolist())
 
 	edge_trace: list[go.Scatter] = []
 
@@ -972,7 +1001,13 @@ def _edge_traces(
 				},
 				hoverinfo="none",
 				mode="lines+markers",
-				marker={"size": edge_width, "symbol": "arrow", "angleref": "previous"},
+				marker={
+					"size": edge_width,
+					"symbol": "arrow",
+					"angleref": "previous",
+					"color": [normalized_for_colors[index]] * 2,
+					"coloraxis": "coloraxis",
+				},
 				opacity=0.5,
 				showlegend=False,
 			)
@@ -1081,6 +1116,7 @@ def plot_network_graph(
 			showlegend=False,
 			hovermode="closest",
 			title={"text": title, "x": 0.5, "y": 0.95},
+			coloraxis={"colorscale": AURORA, "cmin": 0, "cmax": 1, "showscale": False},
 		),
 	)
 
@@ -1142,22 +1178,33 @@ def plot_quality_heatmap(matrix: np.ndarray, animals: list[str], antennas: list[
 		coloraxis_colorbar={"title": {"text": "<b>Missed [%]</b>"}},
 	)
 
-	return figure
+	return _crosshair(figure)
 
 
 def plot_quality_by_antenna(frame: pl.DataFrame) -> go.Figure:
-	"""Plots the pooled miss rate per antenna."""
-	figure = px.bar(
-		frame,
-		x="antenna",
-		y="miss_rate",
-		hover_data={"antenna": True, "miss_rate": ":.2f", "detected": True, "missed": True},
-		title="<b>Missed passes per antenna</b>",
+	"""Plots each antenna's passes as correct, interpolated and bad, stacked to 100%."""
+	antennas = frame["antenna"].cast(pl.String).to_list()
+	figure = go.Figure(
+		[
+			go.Bar(
+				x=antennas,
+				y=frame[f"{kind}_share"],
+				customdata=frame[kind],
+				name=kind.capitalize(),
+				legendgroup=f"reads-{kind}",
+				marker={"color": READ_LOOKS[kind], "line": {"width": 0}},
+				hovertemplate=(
+					f"{kind.capitalize()}: %{{customdata:,}} (%{{y:.2f}}%)<extra></extra>"
+				),
+			)
+			for kind in READ_KINDS
+		]
 	)
-	figure.update_traces(marker_line_width=0, marker_color=AURORA[0][1])
-	figure.update_layout(barcornerradius=10)
+	figure.update_layout(
+		barmode="stack", barcornerradius=10, hovermode="x unified", title="<b>Reads per antenna</b>"
+	)
 	figure.update_xaxes(title_text="<b>Antenna</b>", type="category")
-	figure.update_yaxes(title_text="<b>Missed [%]</b>")
+	figure.update_yaxes(title_text="<b>Passes [%]</b>", range=[0, 100])
 
 	return figure
 
@@ -1171,6 +1218,9 @@ def plot_cage_preference(
 	place: str = "cage",
 ) -> go.Figure:
 	"""Plots position preference on a per position basis (cohort preference summary)."""
+	labels = _tick_labels(positions)
+	frame = frame.with_columns(pl.col("position").replace_strict(positions, labels))
+	positions = labels
 	figure = px.box(
 		frame,
 		x="position",
@@ -1189,13 +1239,10 @@ def plot_cage_preference(
 	)
 
 	figure.update_traces(boxmean=True)
-	figure.update_layout(colorway=colors, legend={"title": "<b>Position</b>"})
+	# Overlay + trace order: a legend-hidden position frees its slot instead of leaving a gap.
+	figure.update_layout(colorway=colors, boxmode="overlay", legend={"title": "<b>Position</b>"})
 	figure.update_yaxes(title_text=value_label)
-	figure.update_xaxes(
-		title_text=f"<b>{place.capitalize()}s</b>",
-		tickvals=list(range(len(positions))),
-		ticktext=_tick_labels(positions),
-	)
+	figure.update_xaxes(title_text=f"<b>{place.capitalize()}s</b>", categoryorder="trace")
 
 	return figure
 
@@ -1207,34 +1254,41 @@ def plot_timeline(
 	colors = dict(zip(positions, sample_palette(len(positions)), strict=True))
 	row_dtype = np.min_scalar_type(len(animals))
 
-	visits = frame.with_columns(pl.col("start", "end").dt.replace_time_zone(None).dt.epoch("ms"))
+	# Wall-clock strings, not epoch numbers: plotly reads a number on a date axis in the
+	# browser's zone, shifting every bar by its UTC offset. None breaks the line between bars.
+	visits = frame.select(
+		"position",
+		"animal_id",
+		x=pl.concat_list(
+			pl.col("start").dt.replace_time_zone(None).dt.to_string(),
+			pl.col("end").dt.replace_time_zone(None).dt.to_string(),
+			pl.lit(None, pl.String),
+		),
+	)
 	groups = visits.partition_by("position", "animal_id", as_dict=True)
 	figure = go.Figure()
 
+	# Every position and animal gets a trace, empty or not: plotly keeps a hidden legend
+	# entry by trace index, and a zoom redraws the figure with other bars. An empty trace
+	# holds one None, since plotly hides a zero-length trace and its legend entry with it.
 	for position in positions:
-		first_animal = True  # Only show legend for the first animal of each position
 		for row, animal in enumerate(animals):
-			if (rows := groups.get((position, animal))) is None:
-				continue
-
-			x = np.full(3 * rows.height, np.nan)
-			x[0::3] = rows["start"].to_numpy()
-			x[1::3] = rows["end"].to_numpy()
+			rows = groups.get((position, animal), visits.clear())
+			x = rows["x"].explode(empty_as_null=False).to_list() or [None]
 
 			figure.add_trace(
 				go.Scattergl(
 					x=x,
-					y=np.full(x.size, row, dtype=row_dtype),
+					y=np.full(len(x), row, dtype=row_dtype),
 					mode="lines",
 					line={"width": 10, "color": colors[position]},
 					name=position,
 					legendgroup=position,
-					showlegend=first_animal,  # Only show legend for the first animal
+					showlegend=row == 0,
 					meta=animal,
 					hovertemplate=f"{position}<br>Animal: %{{meta}}<br>%{{x}}<extra></extra>",
 				)
 			)
-			first_animal = False
 
 	figure.update_yaxes(
 		title=None,
@@ -1264,7 +1318,9 @@ def plot_actogram(heatmap: Heatmap, cells: pl.DataFrame, phases: dict[str, float
 			y=heatmap.y,
 			colorscale=AURORA,
 			xgap=2,
-			ygap=2,
+			# A fixed 2 px gap outgrows the cell once months of days share the card's height.
+			# ponytail: row count stands in for pixels; use the drawn height if cards resize.
+			ygap=2 if len(heatmap.y) <= 36 else 0,
 			hovertemplate="%{y}, hour %{x}<br>%{z} visits<extra></extra>",
 			colorbar={**COLORBAR, "title": {"text": heatmap.label, "side": "right"}},
 		)
@@ -1317,6 +1373,9 @@ def plot_occupancy_ribbon(
 ) -> go.Figure:
 	"""Plots the share of cohort time each place held, stacked to 100% per window unit."""
 	figure = go.Figure()
+	# A category axis thins its ticks to the width it has; it sits a bin at its index, not
+	# its value, so the band and spans are shifted by the first bin.
+	first = frame[granularity].min() or 0
 
 	for place in order:
 		rows = frame.filter(pl.col("place") == place).sort(granularity)
@@ -1345,17 +1404,16 @@ def plot_occupancy_ribbon(
 		# single switch - the same two colours the hours slider and the pulse carry.
 		bins = frame.select(granularity, "phase").unique().sort(granularity)
 		for row in bins.iter_rows(named=True):
-			_band_segment(figure, row["phase"], row[granularity] - 0.5, row[granularity] + 0.5)
-
-	_pin_bin_axis(figure, frame[granularity])
+			x = row[granularity] - first
+			_band_segment(figure, row["phase"], x - 0.5, x + 0.5)
 
 	# The bands stack to 100%, so a span behind them would only show through the
 	# translucent tunnel and undefined ones at the top.
-	_event_spans(figure, spans, outline=True)
+	_event_spans(figure, spans.with_columns(pl.col("x0", "x1") - first), outline=True)
 	label = "Phase" if granularity == "phase_count" else "Day"
 	figure.update_layout(
 		title="<b>Habitat occupancy</b>",
-		xaxis={"title": {"text": f"<b>{label}</b>"}, "dtick": 1, "showgrid": False},
+		xaxis={"title": {"text": f"<b>{label}</b>"}, "type": "category", "showgrid": False},
 		yaxis={"title": {"text": "<b>Share of cohort time [%]</b>"}, "range": [0, 100]},
 		hovermode="x unified",
 	)
