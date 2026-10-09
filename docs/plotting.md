@@ -116,6 +116,10 @@ To list them in code: `deh.PlotRegistry.list_available()`.
 `activity-bar` with `scope="all"` keeps the undefined position, so the time no antenna could
 place stays visible.
 
+The speed plots require explicit per-tunnel distances in `PlotContext.tunnel_lengths_cm`.
+Reading those distances from recording configs is pending the upstream schema; no default
+distance is assumed.
+
 ### Social hierarchy
 
 | plot | shows | options |

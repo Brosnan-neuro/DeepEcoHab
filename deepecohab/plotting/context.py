@@ -48,6 +48,7 @@ class PlotContext:
 			context built by hand instead hands its tables over in ``_loaded``.
 		tunnel_lengths_cm: crossing distance in centimetres by undirected tunnel name.
 			Speed plots require lengths; missing metadata must not imply a default distance.
+			Config integration is pending the upstream tunnel-distance schema.
 	"""
 
 	animal_ids: list[str]
@@ -81,11 +82,6 @@ class PlotContext:
 			days_range=timeline.days_range,
 			phase_range=timeline.phase_range,
 			tunnels_map=recording.layout.tunnels_map,
-			tunnel_lengths_cm={
-				tunnel.name: tunnel.length_cm
-				for tunnel in recording.layout.tunnels
-				if tunnel.length_cm is not None
-			},
 		)
 
 	@cached_property

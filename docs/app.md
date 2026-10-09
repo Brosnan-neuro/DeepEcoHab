@@ -446,11 +446,11 @@ first read after the restart. All counts cover the analysed window only.
   standard-error band, side panel and event shading. The Timescale control selects
   hours or days; the shared granularity control makes the latter count phases.
 
-Speed is the configured antenna-to-antenna distance divided by crossing duration,
-in cm/s. Each tunnel's `length_cm` belongs in `layout.tunnels` in the recording
-config. Older configs without distances still load, but the speed cards report the
-missing length; they do not assume 20 cm. Measure and enter the actual distance for
-each tunnel before using these plots.
+Speed is the antenna-to-antenna distance divided by crossing duration, in cm/s.
+The plots read per-tunnel distances from `PlotContext.tunnel_lengths_cm`.
+Connecting this metadata to recording configs is pending the upstream distance
+schema; this PR does not define a new config field or assume 20 cm. Until that
+connection is available, speed plots require an explicitly populated context.
 
 Both speed cards expose **Max dwell**, in seconds (default 10). Crossings must have
 a positive duration no greater than this cutoff; cage visits and unresolved positions
