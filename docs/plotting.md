@@ -71,7 +71,7 @@ deh.available_attributes(context)
 `sociability-heatmap`) accept only `"cages"` or `"tunnels"`, since cage times run to hours
 and tunnel times to seconds and cannot share one colour scale.
 
-**Events.** Plots with a time axis (`cage-preference-evolution`, `activity-line`, `chasings-line`, `ranking-line`) shade the recording's
+**Events.** Plots with a time axis (`cage-preference-evolution`, `activity-line`, `animal-speed-daily`, `chasings-line`, `ranking-line`) shade the recording's
 [event bouts](./tutorial_antenna.md#metadata).
 
 ## Available plots
@@ -80,17 +80,10 @@ To list them in code: `deh.PlotRegistry.list_available()`.
 
 ### Activity
 
-The Activity dashboard includes `animal-speed` (per-animal violin distributions) and
-`animal-speed-daily` (mean speed, with a Day/Hour selector). Both estimate speed as
-20 cm divided by crossing duration, retaining only tunnel crossings with
-`0 < duration <= 10 seconds`. They follow the shared day/phase window, phase and hour
-filters, cohort colours, and light/dark themes. Hour bins count from the starting
-phase onset, matching the rest of the dashboard, and pool crossings across selected
-days. Means average individual crossing speeds; missing bins are left absent.
-The mean plot also supports the shared group-mean control.
-
 | plot | shows | options |
 |---|---|---|
+| `animal-speed` | one box per tunnel, pooling one median crossing speed per animal and day or phase | `days_range`, `granularity`, `phase_type`, `hours_range`, `max_dwell` (positive seconds, default `10`) |
+| `animal-speed-daily` | mean crossing speed with SEM and a side panel, across hours or days/phases; missing bins stay null | `timescale` (`"days"`, `"hours"`), `days_range`, `granularity`, `phase_type`, `hours_range`, `max_dwell`, `color_by`, `label_by`, `group_mean` |
 | `activity-bar` | visits to each position, or time spent there, per animal | `metric` (`"time"`, `"visits"`), `days_range`, `granularity`, `phase_type`, `agg`, `color_by`, `unit` |
 | `time-alone-bar` | time each animal spent with no other animal present, per position | `days_range`, `granularity`, `phase_type`, `agg`, `scope`, `color_by`, `unit` |
 | `cage-preference` | how the cohort's time is distributed across positions | `days_range`, `granularity`, `phase_type`, `scope`, `unit` |

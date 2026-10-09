@@ -424,14 +424,14 @@ def _option_control(plot: str, option) -> html.Div:
 	control_id = {"type": "card-opt", "plot": plot, "option": option.name}
 	label = _OPTION_LABELS.get(option.name, option.label)
 	if not option.choices:
-		# The only free-form option is edge_cutoff, a percentage.
+		is_dwell = option.name == "max_dwell"
 		control = dmc.NumberInput(
 			id=control_id,
 			value=option.default,
-			min=0,
-			max=100,
-			step=5,
-			suffix="%",
+			min=0.001 if is_dwell else 0,
+			max=None if is_dwell else 100,
+			step=1 if is_dwell else 5,
+			suffix=" s" if is_dwell else "%",
 			clampBehavior="strict",
 			debounce=400,
 			size="xs",

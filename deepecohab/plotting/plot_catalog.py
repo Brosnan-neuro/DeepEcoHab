@@ -37,12 +37,12 @@ BY_COHORT_AND_PHASE = {**BY_COHORT, **PHASE_TYPE}
 	"animal-speed",
 	title="Tunnel-crossing speed",
 	info=(
-		"Per-animal distributions of 20 cm divided by tunnel-crossing duration. "
-		"Only positive durations up to 10 seconds contribute, in either direction. "
-		"The box shows the distribution's quartiles and median."
+		"Median crossing speed per animal and day or phase, pooled into one box per tunnel. "
+		"Speed uses the configured tunnel distance. Both directions count; only positive "
+		"durations up to Max dwell (seconds) contribute."
 	),
-	requires=("main_df", "animals"),
-	dynamic_choices=BY_COHORT_AND_PHASE,
+	requires=("main_df",),
+	dynamic_choices=PHASE_TYPE,
 )
 def animal_speed(
 	context: PlotContext,
@@ -50,26 +50,20 @@ def animal_speed(
 	days_range: tuple[int, int] | None = None,
 	granularity: Granularity = "day",
 	phase_type: Sequence[str] = PHASES,
-	color_by: str = "animal_id",
-	label_by: LabelBy = "animal_id",
 	hours_range: tuple[int, int] | None = None,
+	max_dwell: float = 10,
 ) -> go.Figure:
-	"""Speed distributions assuming 20 cm tunnels and crossings up to 10 seconds."""
-	frame = prepare.prep_animal_speed(
+	"""Per-tunnel distributions of each animal's daily or per-phase median speed."""
+	frame = prepare.prep_speed_box(
 		context,
 		_window(context, days_range, granularity),
 		phase_type,
 		granularity,
 		hours_range,
+		max_dwell,
 	)
-	figure = plot_factory.plot_animal_speed(
-		frame, resolve_colors(context, color_by, label_by=label_by)
-	)
-	return figure.update_xaxes(
-		tickmode="array",
-		tickvals=context.animal_ids,
-		ticktext=animal_labels(context, label_by),
-		title="<b>Subject name</b>" if label_by == "subject_name" else "<b>Animal ID</b>",
+	return plot_factory.plot_animal_speed(
+		frame, context.tunnels, sample_palette(len(context.tunnels)), granularity
 	)
 
 
@@ -77,9 +71,9 @@ def animal_speed(
 	"animal-speed-daily",
 	title="Mean tunnel-crossing speed",
 	info=(
-		"Arithmetic mean of individual crossing speeds, assuming 20 cm tunnels and "
-		"positive durations up to 10 seconds. Hour bins count from phase onset and pool "
-		"crossings across selected days. Missing bins are left absent."
+		"Crossing speeds averaged per animal, day or phase, and hour, then averaged over "
+		"the axis folded away. The band shows SEM across observed cells; empty cells stay "
+		"null. Speed uses configured tunnel distances and the Max dwell cutoff in seconds."
 	),
 	requires=("main_df", "animals"),
 	dynamic_choices=BY_COHORT_AND_PHASE,
@@ -93,25 +87,20 @@ def animal_speed_daily(
 	color_by: str = "animal_id",
 	label_by: LabelBy = "animal_id",
 	hours_range: tuple[int, int] | None = None,
-	time_bin: Literal["day", "hour"] = "day",
+	timescale: Literal["days", "hours"] = "hours",
+	max_dwell: float = 10,
 	group_mean: bool = False,
 ) -> go.Figure:
-	"""Mean crossing speed by day or hour since phase onset; 20 cm tunnels, up to 10 s."""
-	frame = (
-		prepare.prep_animal_speed(
-			context,
-			_window(context, days_range, granularity),
-			phase_type,
-			granularity,
-			hours_range,
-		)
-		.group_by(time_bin, "animal_id")
-		.agg(pl.mean("speed_cm_s").round(2).alias("mean_speed_cm_s"))
-		.sort(time_bin, "animal_id")
+	"""Mean tunnel-crossing speed with SEM, by hour or by day/phase."""
+	window = _window(context, days_range, granularity)
+	x = granularity if timescale == "days" else "hour"
+	frame = prepare.prep_speed_line(
+		context, window, phase_type, granularity, x, hours_range, max_dwell
 	)
+	spans = prepare.prep_event_spans(context, window, granularity, x, hours_range)
 	mapping = resolve_colors(context, color_by, group_mean=group_mean, label_by=label_by)
-	frame = mean_by_group(frame, mapping, ["mean_speed_cm_s"])
-	return plot_factory.plot_animal_speed_daily(frame, mapping, time_bin, context.phases)
+	frame = mean_by_group(frame, mapping, ["mean"])
+	return plot_factory.plot_mean_line(frame, mapping, "speed", x, context.phases, spans)
 
 
 #: The count-line builder each aggregation draws with.

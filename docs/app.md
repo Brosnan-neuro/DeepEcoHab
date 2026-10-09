@@ -388,6 +388,37 @@ to settle before reading anything the analysis says.
 - **Activity per position**: visits to each position, or time spent there.
 - **Position preference over time**: time in each cage or tunnel, across days or phases.
 - **Time per position by hour**: occupancy across the 24 hours of the day.
+- **Tunnel-crossing speed**: one box per tunnel, pooling one median speed per
+  animal and day or phase. Both crossing directions contribute to the same tunnel.
+- **Mean tunnel-crossing speed**: speed over hours or days/phases, with a shaded
+  standard-error band, side panel and event shading. The Timescale control selects
+  hours or days; the shared granularity control makes the latter count phases.
+
+Speed is the configured antenna-to-antenna distance divided by crossing duration,
+in cm/s. Each tunnel's `length_cm` belongs in `layout.tunnels` in the recording
+config. Older configs without distances still load, but the speed cards report the
+missing length; they do not assume 20 cm. Measure and enter the actual distance for
+each tunnel before using these plots.
+
+Both speed cards expose **Max dwell**, in seconds (default 10). Crossings must have
+a positive duration no greater than this cutoff; cage visits and unresolved positions
+are excluded. Shared day/phase, phase-type and hour filters apply before aggregation.
+The time-course plot first averages crossing speeds within each animal/day-or-phase/hour
+cell, then averages observed cells over the axis folded away. Its SEM describes variation
+across those cells. Empty cells stay null and do not lower the average. Group mean
+averages observed animal means and shows SEM across those animals.
+
+```{figure} images/app/animal-speed.png
+:alt: Per-tunnel boxes of daily median crossing speeds, using illustrative data
+
+Per-tunnel speed distributions with illustrative data and configured tunnel distances.
+```
+
+```{figure} images/app/animal-speed-daily.png
+:alt: Mean speed with SEM, a side panel, and event shading, using illustrative data
+
+Mean speed over days for the same illustrative recording.
+```
 
 ```{figure} images/app/tab-activity.png
 :alt: The Activity tab

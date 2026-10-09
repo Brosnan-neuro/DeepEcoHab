@@ -45,7 +45,7 @@ def project(tmp_path_factory) -> Iterator[deh.Project]:
 		experimenter="Tester",
 		location=tmp_path_factory.mktemp("e2e") / "project",
 	)
-	report = created.add_recordings(DATA_DIR.iterdir())
+	report = created.add_recordings(path for path in DATA_DIR.iterdir() if path.is_file())
 	assert not report.failed, f"recordings failed to add: {report.failed}"
 	assert len(report.added) == len(configs)
 
@@ -71,7 +71,13 @@ def project(tmp_path_factory) -> Iterator[deh.Project]:
 @pytest.fixture(scope="session")
 def context(project) -> PlotContext:
 	"""One recording's plotting context, caching the tables it has read."""
-	return PlotContext.from_recording(project.recordings[0])
+	context = PlotContext.from_recording(project.recordings[0])
+	# The bundled legacy configs predate distance metadata. Supply explicit test-only
+	# distances to exercise speed plots, without claiming these are measured lengths.
+	context.tunnel_lengths_cm = {
+		name: 25.0 + index * 5 for index, name in enumerate(context.tunnels)
+	}
+	return context
 
 
 def _tables(recording: deh.Recording) -> dict[str, pl.DataFrame]:

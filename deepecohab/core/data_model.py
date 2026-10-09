@@ -68,10 +68,11 @@ class Cage(BaseModel):
 
 
 class Tunnel(BaseModel):
-	"""EcoHab habitat tunnel."""
+	"""EcoHab habitat tunnel, with optional antenna-to-antenna distance in centimetres."""
 
 	name: str
 	tunnel_no: int
+	length_cm: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 	start_cell_id: str
 	end_cell_id: str
 	antennas: list[str]

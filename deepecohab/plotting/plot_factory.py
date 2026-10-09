@@ -16,59 +16,33 @@ from deepecohab.plotting.prepare import Heatmap
 from deepecohab.plotting.theme import AURORA, COLORBAR, FONT_SIZE, PHASE_BAND, sample_palette
 
 
-def plot_animal_speed(frame: pl.DataFrame, mapping: ColorMapping) -> go.Figure:
-	"""Per-animal crossing distributions, using the shared cohort palette."""
-	figure = px.violin(
+def plot_animal_speed(
+	frame: pl.DataFrame,
+	positions: list[str],
+	colors: list[str],
+	granularity: str,
+) -> go.Figure:
+	"""One box per tunnel, pooling animal/day-or-phase median speeds."""
+	figure = px.box(
 		frame,
-		x="animal_id",
+		x="position",
 		y="speed_cm_s",
-		color="animal_id",
-		color_discrete_map=mapping.by_animal,
-		category_orders={"animal_id": mapping.animal_order},
-		hover_data=["day", "phase", "position", "time_spent", "crossings"],
+		color="position",
+		color_discrete_map=dict(zip(positions, colors, strict=True)),
+		category_orders={"position": positions},
+		hover_data=["animal_id", granularity],
 		points="outliers",
-		box=True,
+		labels={"speed_cm_s": "Median speed [cm/s]", "position": "Tunnel"},
 	)
-	collapse_legend(figure, mapping)
+	figure.update_traces(boxmean=True)
 	figure.update_layout(
 		title="<b>Tunnel-crossing speed</b>",
-		showlegend=mapping.column != "animal_id",
-		legend={"title": mapping.legend_title, "tracegroupgap": 0},
-		xaxis_title="<b>Animal ID</b>",
-		yaxis_title="<b>Speed [cm/s]</b>",
+		colorway=colors,
+		legend={"title": "<b>Tunnel</b>"},
+		xaxis_title="<b>Tunnels</b>",
+		yaxis_title="<b>Median speed [cm/s]</b>",
 	)
-	figure.update_traces(spanmode="hard")
-	return figure
-
-
-def plot_animal_speed_daily(
-	frame: pl.DataFrame,
-	mapping: ColorMapping,
-	time_bin: Literal["day", "hour"],
-	phases: dict[str, float],
-) -> go.Figure:
-	"""Arithmetic mean crossing speeds; hourly bins pool the selected days."""
-	figure = px.line(
-		frame.sort(time_bin),
-		x=time_bin,
-		y="mean_speed_cm_s",
-		markers=True,
-		color=mapping.trace_column,
-		color_discrete_map=mapping.trace_colors,
-		category_orders={mapping.trace_column: mapping.order},
-	)
-	collapse_legend(figure, mapping)
-	figure.update_layout(
-		title="<b>Mean tunnel-crossing speed</b>",
-		legend={"title": mapping.legend_title, "tracegroupgap": 0},
-		xaxis={
-			"title": "<b>Day</b>" if time_bin == "day" else "<b>Hour since phase onset</b>",
-			"dtick": 1,
-		},
-		yaxis_title="<b>Mean speed [cm/s]</b>",
-	)
-	if time_bin == "hour" and not frame.is_empty():
-		_phase_markers(figure, phases)
+	figure.update_xaxes(tickvals=positions, ticktext=_tick_labels(positions))
 	return figure
 
 
@@ -475,6 +449,7 @@ def plot_time_alone(
 _LINE_LABELS: dict[str, tuple[str, str, str]] = {
 	"activity": ("<b>Activity over time</b>", "<b>Antenna detections</b>", "Detections"),
 	"chasings": ("<b>Chasing over time</b>", "<b># of chasing events</b>", "Events"),
+	"speed": ("<b>Mean tunnel-crossing speed</b>", "<b>Mean speed [cm/s]</b>", "Speed [cm/s]"),
 }
 
 #: Hover label and axis title of each axis a count line plot can run along.
@@ -629,12 +604,12 @@ def plot_sum_line(
 def plot_mean_line(
 	frame: pl.DataFrame,
 	mapping: ColorMapping,
-	input_type: Literal["activity", "chasings"],
+	input_type: Literal["activity", "chasings", "speed"],
 	x: Literal["hour", "day", "phase_count"],
 	phases: dict[str, float],
 	spans: pl.DataFrame,
 ) -> go.Figure:
-	"""Plots means for activity or chasings with SEM shading, per hour or per window unit."""
+	"""Plots means with SEM shading, per hour or per window unit."""
 	title, y_axes_label, hover_label = _LINE_LABELS[input_type]
 	x_label = _LINE_X[x][0]
 
